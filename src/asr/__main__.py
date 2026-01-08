@@ -5,3 +5,12 @@ The pipeline module is imported lazily here: importing it from
 ``-m`` makes runpy warn about a module that is already in ``sys.modules``.
 A dedicated ``__main__`` avoids that without hiding the API.
 """
+
+from __future__ import annotations
+
+import sys
+
+from asr.pipeline import main
+
+if __name__ == "__main__":
+    sys.exit(main())
