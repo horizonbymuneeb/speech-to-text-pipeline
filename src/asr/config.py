@@ -114,3 +114,81 @@ def ms_to_samples(milliseconds: float, sample_rate: int) -> int:
     if sample_rate <= 0:
         raise ConfigError("sample_rate must be positive")
     return int(round(milliseconds * sample_rate / 1000.0))
+
+
+def ms_to_frames(milliseconds: float, hop_length: int, sample_rate: int) -> int:
+    """Convert a duration in milliseconds to a number of hop frames."""
+    hop_samples = ms_to_samples(milliseconds, sample_rate)
+    return max(1, int(round(hop_samples / max(1, hop_length))))
+
+
+@dataclass(frozen=True)
+class AudioConfig:
+    """Sample rate and the amplitude budget of the synthetic corpus."""
+
+    sample_rate: int = 8000
+    peak_amplitude: float = 0.9
+    noise_snr_db: float = 25.0
+
+    def __post_init__(self) -> None:
+        if self.sample_rate < 4000:
+            raise ConfigError("audio.sample_rate must be >= 4000")
+        if not 0.0 < self.peak_amplitude <= 1.0:
+            raise ConfigError("audio.peak_amplitude must be in (0, 1]")
+        if self.noise_snr_db <= 0:
+            raise ConfigError("audio.noise_snr_db must be positive")
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "AudioConfig":
+        return cls(
+            sample_rate=int(mapping["sample_rate"]),
+            peak_amplitude=float(mapping["peak_amplitude"]),
+            noise_snr_db=float(mapping["noise_snr_db"]),
+        )
+
+
+@dataclass(frozen=True)
+class SynthConfig:
+    """How the synthetic utterances are generated."""
+
+    seed: int = 7
+    vocabulary: tuple[str, ...] = (
+        "kasa",
+        "timo",
+        "velu",
+        "nara",
+        "piso",
+        "duma",
+        "seko",
+        "bora",
+    )
+    words_per_utterance: tuple[int, int] = (3, 5)
+    f0_hz: float = 120.0
+    gap_ms: tuple[float, float] = (40.0, 90.0)
+
+    def __post_init__(self) -> None:
+        if not self.vocabulary:
+            raise ConfigError("synth.vocabulary must not be empty")
+        if len(set(self.vocabulary)) != len(self.vocabulary):
+            raise ConfigError("synth.vocabulary contains duplicates")
+        for word in self.vocabulary:
+            if not word or not word.isalpha() or word != word.lower():
+                raise ConfigError(f"vocabulary word {word!r} must be lowercase letters")
+        low, high = self.words_per_utterance
+        if low < 1 or high < low:
+            raise ConfigError("synth.words_per_utterance must be [low, high] with 1 <= low <= high")
+        if self.f0_hz < 60 or self.f0_hz > 400:
+            raise ConfigError("synth.f0_hz must be between 60 and 400")
+        gap_low, gap_high = self.gap_ms
+        if gap_low < 0 or gap_high < gap_low:
+            raise ConfigError("synth.gap_ms must be [low, high] with 0 <= low <= high")
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "SynthConfig":
+        return cls(
+            seed=int(mapping["seed"]),
+            vocabulary=tuple(str(word) for word in mapping["vocabulary"]),
+            words_per_utterance=tuple(int(v) for v in mapping["words_per_utterance"]),  # type: ignore[arg-type]
+            f0_hz=float(mapping["f0_hz"]),
+            gap_ms=tuple(float(v) for v in mapping["gap_ms"]),  # type: ignore[arg-type]
+        )
