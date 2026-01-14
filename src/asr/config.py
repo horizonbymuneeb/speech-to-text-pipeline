@@ -192,3 +192,146 @@ class SynthConfig:
             f0_hz=float(mapping["f0_hz"]),
             gap_ms=tuple(float(v) for v in mapping["gap_ms"]),  # type: ignore[arg-type]
         )
+
+
+@dataclass(frozen=True)
+class VadConfig:
+    """Short-time energy / zero-crossing voice activity detection settings."""
+
+    frame_ms: float = 25.0
+    hop_ms: float = 10.0
+    energy_threshold_db: float = 8.0
+    max_zcr: float = 0.35
+    hangover_ms: float = 60.0
+    min_speech_ms: float = 60.0
+    pre_roll_ms: float = 30.0
+
+    def __post_init__(self) -> None:
+        if self.frame_ms <= 0 or self.hop_ms <= 0:
+            raise ConfigError("vad frame_ms and hop_ms must be positive")
+        if self.hop_ms > self.frame_ms:
+            raise ConfigError("vad.hop_ms must not exceed vad.frame_ms")
+        if not 0.0 <= self.max_zcr <= 1.0:
+            raise ConfigError("vad.max_zcr must be in [0, 1]")
+        if self.min_speech_ms < 0 or self.hangover_ms < 0 or self.pre_roll_ms < 0:
+            raise ConfigError("vad durations must be non-negative")
+
+    def frame_length(self, sample_rate: int) -> int:
+        """Analysis window length in samples."""
+        return ms_to_samples(self.frame_ms, sample_rate)
+
+    def hop_length(self, sample_rate: int) -> int:
+        """Hop between analysis windows in samples."""
+        return ms_to_samples(self.hop_ms, sample_rate)
+
+    def hangover_frames(self, sample_rate: int) -> int:
+        """How many frames a speech decision survives after energy drops."""
+        return ms_to_frames(self.hangover_ms, self.hop_length(sample_rate), sample_rate)
+
+    def min_speech_frames(self, sample_rate: int) -> int:
+        """Segments shorter than this are discarded."""
+        return ms_to_frames(self.min_speech_ms, self.hop_length(sample_rate), sample_rate)
+
+    def pre_roll_frames(self, sample_rate: int) -> int:
+        """Frames of context kept before a detected onset."""
+        return ms_to_frames(self.pre_roll_ms, self.hop_length(sample_rate), sample_rate)
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "VadConfig":
+        return cls(
+            frame_ms=float(mapping["frame_ms"]),
+            hop_ms=float(mapping["hop_ms"]),
+            energy_threshold_db=float(mapping["energy_threshold_db"]),
+            max_zcr=float(mapping["max_zcr"]),
+            hangover_ms=float(mapping["hangover_ms"]),
+            min_speech_ms=float(mapping["min_speech_ms"]),
+            pre_roll_ms=float(mapping["pre_roll_ms"]),
+        )
+
+
+@dataclass(frozen=True)
+class FeatureConfig:
+    """Log-mel front end settings."""
+
+    frame_ms: float = 25.0
+    hop_ms: float = 10.0
+    n_fft: int = 256
+    n_mels: int = 40
+    fmin_hz: float = 60.0
+    fmax_hz: float = 3800.0
+    pre_emphasis: float = 0.97
+    use_deltas: bool = True
+    cmvn: bool = True
+
+    def __post_init__(self) -> None:
+        if self.frame_ms <= 0 or self.hop_ms <= 0:
+            raise ConfigError("features frame_ms and hop_ms must be positive")
+        if self.hop_ms > self.frame_ms:
+            raise ConfigError("features.hop_ms must not exceed features.frame_ms")
+        if self.n_fft < 16 or self.n_fft & (self.n_fft - 1):
+            raise ConfigError("features.n_fft must be a power of two >= 16")
+        if self.n_mels < 1 or self.n_mels > self.n_fft // 2:
+            raise ConfigError("features.n_mels must be between 1 and n_fft/2")
+        if not 0.0 <= self.pre_emphasis < 1.0:
+            raise ConfigError("features.pre_emphasis must be in [0, 1)")
+        if self.fmin_hz < 0 or self.fmax_hz <= self.fmin_hz:
+            raise ConfigError("features fmin_hz/fmax_hz must satisfy 0 <= fmin < fmax")
+
+    def frame_length(self, sample_rate: int) -> int:
+        """Analysis window length in samples."""
+        return ms_to_samples(self.frame_ms, sample_rate)
+
+    def hop_length(self, sample_rate: int) -> int:
+        """Hop between windows in samples."""
+        return ms_to_samples(self.hop_ms, sample_rate)
+
+    @property
+    def n_freq_bins(self) -> int:
+        """Number of rfft bins kept by the power spectrum."""
+        return self.n_fft // 2 + 1
+
+    @property
+    def output_dim(self) -> int:
+        """Feature vector size after optional deltas."""
+        return self.n_mels * 3 if self.use_deltas else self.n_mels
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "FeatureConfig":
+        return cls(
+            frame_ms=float(mapping["frame_ms"]),
+            hop_ms=float(mapping["hop_ms"]),
+            n_fft=int(mapping["n_fft"]),
+            n_mels=int(mapping["n_mels"]),
+            fmin_hz=float(mapping["fmin_hz"]),
+            fmax_hz=float(mapping["fmax_hz"]),
+            pre_emphasis=float(mapping["pre_emphasis"]),
+            use_deltas=bool(mapping["use_deltas"]),
+            cmvn=bool(mapping["cmvn"]),
+        )
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    """Acoustic model width."""
+
+    channels: int = 48
+    hidden: int = 64
+    dropout: float = 0.0
+    seed: int = 13
+
+    def __post_init__(self) -> None:
+        if self.channels < 8:
+            raise ConfigError("model.channels must be >= 8")
+        if self.hidden < 8:
+            raise ConfigError("model.hidden must be >= 8")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ConfigError("model.dropout must be in [0, 1)")
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "ModelConfig":
+        return cls(
+            channels=int(mapping["channels"]),
+            hidden=int(mapping["hidden"]),
+            dropout=float(mapping["dropout"]),
+            seed=int(mapping["seed"]),
+        )
