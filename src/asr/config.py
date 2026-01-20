@@ -335,3 +335,191 @@ class ModelConfig:
             dropout=float(mapping["dropout"]),
             seed=int(mapping["seed"]),
         )
+
+
+@dataclass(frozen=True)
+class DecodeConfig:
+    """Streaming chunking and search settings."""
+
+    chunk_ms: float = 400.0
+    overlap_ms: float = 120.0
+    beam_width: int = 1
+    blank_index: int = 0
+
+    def __post_init__(self) -> None:
+        if self.chunk_ms <= 0:
+            raise ConfigError("decode.chunk_ms must be positive")
+        if self.overlap_ms < 0:
+            raise ConfigError("decode.overlap_ms must be non-negative")
+        if self.overlap_ms >= self.chunk_ms:
+            raise ConfigError("decode.overlap_ms must be smaller than decode.chunk_ms")
+        if self.beam_width < 1:
+            raise ConfigError("decode.beam_width must be >= 1")
+        if self.blank_index < 0:
+            raise ConfigError("decode.blank_index must be >= 0")
+
+    def chunk_samples(self, sample_rate: int) -> int:
+        return ms_to_samples(self.chunk_ms, sample_rate)
+
+    def overlap_samples(self, sample_rate: int) -> int:
+        return ms_to_samples(self.overlap_ms, sample_rate)
+
+    def hop_samples(self, sample_rate: int) -> int:
+        return self.chunk_samples(sample_rate) - self.overlap_samples(sample_rate)
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "DecodeConfig":
+        return cls(
+            chunk_ms=float(mapping["chunk_ms"]),
+            overlap_ms=float(mapping["overlap_ms"]),
+            beam_width=int(mapping["beam_width"]),
+            blank_index=int(mapping["blank_index"]),
+        )
+
+
+@dataclass(frozen=True)
+class TrainConfig:
+    """Training loop settings."""
+
+    epochs: int = 12
+    batch_size: int = 4
+    learning_rate: float = 0.01
+    seed: int = 21
+    checkpoint: str = "checkpoints/ctc.pt"
+    train_utterances: int = 24
+    eval_utterances: int = 6
+
+    def __post_init__(self) -> None:
+        if self.epochs < 1:
+            raise ConfigError("train.epochs must be >= 1")
+        if self.batch_size < 1:
+            raise ConfigError("train.batch_size must be >= 1")
+        if self.learning_rate <= 0:
+            raise ConfigError("train.learning_rate must be positive")
+        if self.train_utterances < 1 or self.eval_utterances < 1:
+            raise ConfigError("train utterance counts must be >= 1")
+
+    def checkpoint_path(self, base_dir: Path) -> Path:
+        """Absolute checkpoint path, resolved against the config directory."""
+        candidate = Path(self.checkpoint).expanduser()
+        return candidate if candidate.is_absolute() else (Path(base_dir) / candidate).resolve()
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrainConfig":
+        return cls(
+            epochs=int(mapping["epochs"]),
+            batch_size=int(mapping["batch_size"]),
+            learning_rate=float(mapping["learning_rate"]),
+            seed=int(mapping["seed"]),
+            checkpoint=str(mapping["checkpoint"]),
+            train_utterances=int(mapping["train_utterances"]),
+            eval_utterances=int(mapping["eval_utterances"]),
+        )
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    """The whole configuration, with paths resolved against ``base_dir``."""
+
+    audio: AudioConfig = field(default_factory=AudioConfig)
+    synth: SynthConfig = field(default_factory=SynthConfig)
+    vad: VadConfig = field(default_factory=VadConfig)
+    features: FeatureConfig = field(default_factory=FeatureConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    decode: DecodeConfig = field(default_factory=DecodeConfig)
+    train: TrainConfig = field(default_factory=TrainConfig)
+    base_dir: Path = field(default_factory=lambda: Path.cwd())
+
+    @property
+    def sample_rate(self) -> int:
+        """Shorthand for the audio sample rate."""
+        return self.audio.sample_rate
+
+    def checkpoint_path(self) -> Path:
+        """Absolute path of the model checkpoint."""
+        return self.train.checkpoint_path(self.base_dir)
+
+    def feature_dim(self) -> int:
+        """Model input size implied by the feature config."""
+        return self.features.output_dim
+
+    def to_dict(self) -> dict[str, Any]:
+        """Plain mapping (config + resolved base directory)."""
+        return {
+            "audio": {
+                "sample_rate": self.audio.sample_rate,
+                "peak_amplitude": self.audio.peak_amplitude,
+                "noise_snr_db": self.audio.noise_snr_db,
+            },
+            "synth": {
+                "seed": self.synth.seed,
+                "vocabulary": list(self.synth.vocabulary),
+                "words_per_utterance": list(self.synth.words_per_utterance),
+                "f0_hz": self.synth.f0_hz,
+                "gap_ms": list(self.synth.gap_ms),
+            },
+            "vad": {
+                "frame_ms": self.vad.frame_ms,
+                "hop_ms": self.vad.hop_ms,
+                "energy_threshold_db": self.vad.energy_threshold_db,
+                "max_zcr": self.vad.max_zcr,
+                "hangover_ms": self.vad.hangover_ms,
+                "min_speech_ms": self.vad.min_speech_ms,
+                "pre_roll_ms": self.vad.pre_roll_ms,
+            },
+            "features": {
+                "frame_ms": self.features.frame_ms,
+                "hop_ms": self.features.hop_ms,
+                "n_fft": self.features.n_fft,
+                "n_mels": self.features.n_mels,
+                "fmin_hz": self.features.fmin_hz,
+                "fmax_hz": self.features.fmax_hz,
+                "pre_emphasis": self.features.pre_emphasis,
+                "use_deltas": self.features.use_deltas,
+                "cmvn": self.features.cmvn,
+            },
+            "model": {
+                "channels": self.model.channels,
+                "hidden": self.model.hidden,
+                "dropout": self.model.dropout,
+                "seed": self.model.seed,
+            },
+            "decode": {
+                "chunk_ms": self.decode.chunk_ms,
+                "overlap_ms": self.decode.overlap_ms,
+                "beam_width": self.decode.beam_width,
+                "blank_index": self.decode.blank_index,
+            },
+            "train": {
+                "epochs": self.train.epochs,
+                "batch_size": self.train.batch_size,
+                "learning_rate": self.train.learning_rate,
+                "seed": self.train.seed,
+                "checkpoint": self.train.checkpoint,
+                "train_utterances": self.train.train_utterances,
+                "eval_utterances": self.train.eval_utterances,
+            },
+            "base_dir": str(self.base_dir),
+        }
+
+    def with_overrides(self, **overrides: Any) -> "PipelineConfig":
+        """Return a copy with dataclass fields replaced (``replace`` sugar)."""
+        return replace(self, **overrides)
+
+    @classmethod
+    def from_mapping(
+        cls, mapping: Mapping[str, Any], base_dir: Path | str | None = None
+    ) -> "PipelineConfig":
+        merged = deep_merge(DEFAULT_CONFIG, mapping)
+        validate_config(merged)
+        root = Path(base_dir) if base_dir is not None else Path.cwd()
+        return cls(
+            audio=AudioConfig.from_mapping(merged["audio"]),
+            synth=SynthConfig.from_mapping(merged["synth"]),
+            vad=VadConfig.from_mapping(merged["vad"]),
+            features=FeatureConfig.from_mapping(merged["features"]),
+            model=ModelConfig.from_mapping(merged["model"]),
+            decode=DecodeConfig.from_mapping(merged["decode"]),
+            train=TrainConfig.from_mapping(merged["train"]),
+            base_dir=root,
+        )
