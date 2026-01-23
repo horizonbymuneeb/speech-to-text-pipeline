@@ -54,3 +54,25 @@ def learn_config(config, tmp_path_factory):
         ),
         base_dir=root,
     )
+
+
+@pytest.fixture(scope="session")
+def trained_pipeline(learn_config):
+    """A pipeline trained with the shipped recipe, trained once for the session."""
+    from asr.pipeline import SpeechPipeline
+
+    return SpeechPipeline.create(learn_config, force_train=True)
+
+
+@pytest.fixture()
+def tone():
+    """A 0.5 s 440 Hz tone at the configured sample rate."""
+    sample_rate = 8000
+    time = np.arange(int(0.5 * sample_rate)) / sample_rate
+    return (0.8 * np.sin(2 * np.pi * 440.0 * time)).astype(np.float32)
+
+
+@pytest.fixture()
+def silence():
+    """0.5 s of digital silence."""
+    return np.zeros(4000, dtype=np.float32)

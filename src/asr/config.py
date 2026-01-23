@@ -523,3 +523,75 @@ class PipelineConfig:
             train=TrainConfig.from_mapping(merged["train"]),
             base_dir=root,
         )
+
+
+def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``override`` into a copy of ``base`` (lists replace)."""
+    result: dict[str, Any] = copy.deepcopy(dict(base))
+    for key, value in override.items():
+        if key in result and isinstance(result[key], Mapping) and isinstance(value, Mapping):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def validate_config(mapping: Mapping[str, Any]) -> None:
+    """Check section names, key names and value types of a raw config mapping."""
+    if not isinstance(mapping, Mapping):
+        raise ConfigError(f"config must be a mapping, got {type(mapping).__name__}")
+    for section, value in mapping.items():
+        if section not in _SECTIONS:
+            raise ConfigError(f"unknown config section {section!r}")
+        if not isinstance(value, Mapping):
+            raise ConfigError(f"config section {section!r} must be a mapping")
+        allowed = _SECTIONS[section]
+        for key, item in value.items():
+            if key not in allowed:
+                raise ConfigError(f"unknown config key {section}.{key}")
+            expected = allowed[key]
+            if expected is bool:
+                if not isinstance(item, bool):
+                    raise ConfigError(f"config key {section}.{key} must be a bool")
+            elif expected is int:
+                if isinstance(item, bool) or not isinstance(item, int):
+                    raise ConfigError(f"config key {section}.{key} must be an int")
+            elif expected is float:
+                if isinstance(item, bool) or not isinstance(item, (int, float)):
+                    raise ConfigError(f"config key {section}.{key} must be a number")
+            elif expected is list:
+                if not isinstance(item, list):
+                    raise ConfigError(f"config key {section}.{key} must be a list")
+            elif expected is str:
+                if not isinstance(item, str):
+                    raise ConfigError(f"config key {section}.{key} must be a string")
+        missing = set(allowed) - set(value)
+        if missing:
+            raise ConfigError(f"config section {section!r} is missing keys: {sorted(missing)}")
+
+
+def load_config(
+    path: str | Path | None = None, overrides: Mapping[str, Any] | None = None
+) -> PipelineConfig:
+    """Load ``config.yaml``, merge ``overrides`` and return a validated config.
+
+    ``path=None`` means defaults only. Relative paths inside the file (the
+    checkpoint) resolve against the file's directory, not the process CWD.
+    """
+    raw: dict[str, Any] = {}
+    base_dir = Path.cwd()
+    if path is not None:
+        config_path = Path(path).expanduser()
+        if not config_path.is_file():
+            raise ConfigError(f"config file not found: {config_path}")
+        try:
+            loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:  # pragma: no cover - passthrough
+            raise ConfigError(f"invalid YAML in {config_path}: {exc}") from exc
+        if not isinstance(loaded, Mapping):
+            raise ConfigError(f"{config_path} must contain a mapping at the top level")
+        raw = dict(loaded)
+        base_dir = config_path.resolve().parent
+    if overrides:
+        raw = deep_merge(raw, overrides)
+    return PipelineConfig.from_mapping(raw, base_dir=base_dir)
