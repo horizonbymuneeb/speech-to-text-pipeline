@@ -21,3 +21,5 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import torch
+
+NEG_INF = -1e30

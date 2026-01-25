@@ -1,0 +1,54 @@
+# Tunables read by asr.config.load_config(). Every value has a default in
+# src/asr/config.py; keep only the keys you want to override.
+audio:
+  sample_rate: 8000          # 8 kHz keeps the synthetic corpus small and fast
+  peak_amplitude: 0.9
+  noise_snr_db: 25.0
+
+synth:
+  seed: 7
+  vocabulary: [kasa, timo, velu, nara, piso, duma, seko, bora]
+  words_per_utterance: [3, 5]   # inclusive range, sampled per utterance
+  f0_hz: 120.0
+  gap_ms: [40, 90]              # silence between words
+
+vad:
+  frame_ms: 25.0
+  hop_ms: 10.0
+  energy_threshold_db: 8.0     # above the estimated noise floor
+  max_zcr: 0.35                # reject fricative-only frames
+  hangover_ms: 60.0            # keep speech state alive after energy drops
+  min_speech_ms: 60.0
+  pre_roll_ms: 30.0
+
+features:
+  frame_ms: 25.0
+  hop_ms: 10.0
+  n_fft: 256
+  n_mels: 32                 # 32 bands is plenty for 8 kHz / 3.8 kHz bandwidth
+  fmin_hz: 60.0
+  fmax_hz: 3800.0
+  pre_emphasis: 0.97
+  use_deltas: true
+  cmvn: true
+
+model:
+  channels: 32
+  hidden: 48
+  dropout: 0.0
+  seed: 13
+
+decode:
+  chunk_ms: 400.0
+  overlap_ms: 120.0
+  beam_width: 1                # 1 = greedy, >1 = prefix beam search
+  blank_index: 0
+
+train:
+  epochs: 18                 # converges in ~10 s on two CPU cores
+  batch_size: 4
+  learning_rate: 0.01
+  seed: 21
+  checkpoint: checkpoints/ctc.pt
+  train_utterances: 24
+  eval_utterances: 6
