@@ -23,3 +23,27 @@ from typing import Sequence
 import torch
 
 NEG_INF = -1e30
+
+
+class CtcError(ValueError):
+    """Raised for malformed CTC inputs."""
+
+
+@dataclass(frozen=True)
+class BeamResult:
+    """One decoded sequence and its log probability."""
+
+    tokens: tuple[int, ...]
+    score: float
+
+    def to_list(self) -> list[int]:
+        return list(self.tokens)
+
+
+def log_softmax(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    """Numerically stable log-softmax."""
+    if logits.numel() == 0:
+        raise CtcError("cannot take log_softmax of an empty tensor")
+    maximum = torch.max(logits, dim=dim, keepdim=True).values
+    shifted = logits - maximum
+    return shifted - torch.log(torch.sum(torch.exp(shifted), dim=dim, keepdim=True))
