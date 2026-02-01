@@ -77,3 +77,110 @@ def _skip_mask(extended: torch.Tensor, blank: int) -> torch.Tensor:
     if states >= 3:
         mask[:, 2:] = (extended[:, 2:] != int(blank)) & (extended[:, 2:] != extended[:, :-2])
     return mask
+
+
+def ctc_loss(
+    log_probs: torch.Tensor,
+    targets: torch.Tensor,
+    input_lengths: torch.Tensor,
+    target_lengths: torch.Tensor,
+    blank: int = 0,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """CTC negative log-likelihood.
+
+    ``log_probs`` is ``(T, N, C)`` of log probabilities, ``targets`` is ``(N, S)``
+    of token ids, and the lengths are ``(N,)`` tensors. ``reduction`` is
+    ``"mean"``, ``"sum"`` or ``"none"``.
+
+    ``"mean"`` follows PyTorch's convention rather than a plain batch average:
+    each sample's loss is divided by its own target length first, then averaged.
+    That keeps utterances with different transcript lengths comparable — a plain
+    batch mean makes a long transcript dominate the gradient.
+    """
+    if log_probs.ndim != 3:
+        raise CtcError("log_probs must be (time, batch, classes)")
+    if targets.ndim != 2:
+        raise CtcError("targets must be (batch, target_length)")
+    time_steps, batch, classes = log_probs.shape
+    if time_steps < 1:
+        raise CtcError("need at least one time step")
+    if targets.shape[0] != batch:
+        raise CtcError("targets batch size does not match log_probs")
+    if input_lengths.shape[0] != batch or target_lengths.shape[0] != batch:
+        raise CtcError("length tensors must have one entry per batch element")
+    if reduction not in ("mean", "sum", "none"):
+        raise CtcError(f"unknown reduction {reduction!r}")
+    if int(target_lengths.max()) > time_steps:
+        raise CtcError("target length exceeds the number of time steps")
+    if int(input_lengths.max()) > time_steps:
+        raise CtcError("input length exceeds the number of time steps")
+
+    extended = extend_targets(targets, blank)
+    states = extended.shape[1]
+    skip = _skip_mask(extended, blank)
+    gathered = log_probs[:, torch.arange(batch).unsqueeze(1), extended]  # (T, N, S_ext)
+
+    alpha = torch.full((batch, states), NEG_INF, dtype=log_probs.dtype)
+    alpha[:, 0] = gathered[0, :, 0]
+    if states > 1:
+        alpha[:, 1] = gathered[0, :, 1]
+
+    # A sample whose input is shorter than the padded batch must not advance
+    # after its last real frame; without this mask the padded frames keep adding
+    # probability mass and the loss is silently too low.
+    positions = torch.arange(time_steps).unsqueeze(1)
+    active = positions < input_lengths.unsqueeze(0)  # (T, N)
+
+    for step in range(1, time_steps):
+        stay = alpha
+        step_back = torch.full_like(alpha, NEG_INF)
+        step_back[:, 1:] = alpha[:, :-1]
+        skip_back = torch.full_like(alpha, NEG_INF)
+        skip_back[:, 2:] = alpha[:, :-2]
+        skip_back = torch.where(skip, skip_back, torch.full_like(skip_back, NEG_INF))
+        stacked = torch.stack([stay, step_back, skip_back], dim=-1)
+        updated = torch.logsumexp(stacked, dim=-1) + gathered[step]
+        alpha = torch.where(active[step].unsqueeze(1), updated, alpha)
+
+    last = 2 * target_lengths
+    rows = torch.arange(batch)
+    final_blank = alpha[rows, last]
+    final_non_blank = torch.where(
+        target_lengths > 0,
+        alpha[rows, torch.clamp(last - 1, min=0)],
+        torch.full_like(final_blank, NEG_INF),
+    )
+    per_sample = -torch.logsumexp(torch.stack([final_blank, final_non_blank], dim=-1), dim=-1)
+
+    if reduction == "none":
+        return per_sample
+    if reduction == "sum":
+        return per_sample.sum()
+    normaliser = torch.clamp(target_lengths, min=1).to(per_sample.dtype)
+    return (per_sample / normaliser).mean()
+
+
+def sequence_log_prob(
+    log_probs: torch.Tensor, tokens: Sequence[int], blank: int = 0
+) -> float:
+    """Log probability of one exact token sequence under a ``(T, C)`` matrix."""
+    if log_probs.ndim != 2:
+        raise CtcError("sequence_log_prob expects a single (time, classes) matrix")
+    target = torch.tensor([list(int(token) for token in tokens)], dtype=torch.long)
+    lengths = torch.tensor([len(tokens)], dtype=torch.long)
+    inputs = torch.tensor([log_probs.shape[0]], dtype=torch.long)
+    loss = ctc_loss(log_probs.unsqueeze(1), target, inputs, lengths, blank=blank, reduction="sum")
+    return float(-loss)
+
+
+def collapse_path(path: Sequence[int], blank: int = 0) -> list[int]:
+    """Collapse a frame-level path: merge repeats, drop blanks."""
+    collapsed: list[int] = []
+    previous: int | None = None
+    for token in path:
+        token = int(token)
+        if token != previous and token != int(blank):
+            collapsed.append(token)
+        previous = token
+    return collapsed

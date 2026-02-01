@@ -47,3 +47,18 @@ def test_ms_conversions():
     assert ms_to_samples(10.0, 16000) == 160
     assert ms_to_frames(60.0, 80, 8000) == 6
     assert ms_to_frames(1.0, 80, 8000) == 1  # never zero frames
+
+
+def test_unknown_section_rejected():
+    with pytest.raises(ConfigError, match="unknown config section"):
+        PipelineConfig.from_mapping({"vadd": {}})
+
+
+def test_unknown_key_rejected():
+    with pytest.raises(ConfigError, match="unknown config key vad.max_zc"):
+        PipelineConfig.from_mapping({"vad": {"max_zc": 0.3}})
+
+
+def test_wrong_type_rejected():
+    with pytest.raises(ConfigError, match="must be an int"):
+        PipelineConfig.from_mapping({"features": {"n_mels": "forty"}})
