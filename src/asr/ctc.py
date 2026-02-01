@@ -47,3 +47,33 @@ def log_softmax(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
     maximum = torch.max(logits, dim=dim, keepdim=True).values
     shifted = logits - maximum
     return shifted - torch.log(torch.sum(torch.exp(shifted), dim=dim, keepdim=True))
+
+
+def log_add(a: float, b: float) -> float:
+    """``log(exp(a) + exp(b))`` without overflowing."""
+    if a <= NEG_INF:
+        return b
+    if b <= NEG_INF:
+        return a
+    high, low = (a, b) if a > b else (b, a)
+    return high + math.log1p(math.exp(low - high))
+
+
+def extend_targets(targets: torch.Tensor, blank: int = 0) -> torch.Tensor:
+    """Interleave blanks: ``(N, S)`` targets become ``(N, 2S+1)``."""
+    if targets.ndim != 2:
+        raise CtcError("targets must be 2-D (batch, target_length)")
+    batch, length = targets.shape
+    extended = torch.full((batch, 2 * length + 1), int(blank), dtype=torch.long)
+    if length:
+        extended[:, 1::2] = targets
+    return extended
+
+
+def _skip_mask(extended: torch.Tensor, blank: int) -> torch.Tensor:
+    """States that may be reached from two steps back (a repeated label blocks it)."""
+    states = extended.shape[1]
+    mask = torch.zeros_like(extended, dtype=torch.bool)
+    if states >= 3:
+        mask[:, 2:] = (extended[:, 2:] != int(blank)) & (extended[:, 2:] != extended[:, :-2])
+    return mask
