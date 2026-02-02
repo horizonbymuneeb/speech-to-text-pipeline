@@ -62,3 +62,41 @@ def test_unknown_key_rejected():
 def test_wrong_type_rejected():
     with pytest.raises(ConfigError, match="must be an int"):
         PipelineConfig.from_mapping({"features": {"n_mels": "forty"}})
+
+
+def test_bool_is_not_an_int():
+    with pytest.raises(ConfigError, match="must be an int"):
+        PipelineConfig.from_mapping({"model": {"channels": True}})
+
+
+def test_deep_merge_is_recursive_and_pure():
+    base = {"a": {"b": 1, "c": 2}}
+    merged = deep_merge(base, {"a": {"c": 9}})
+    assert merged == {"a": {"b": 1, "c": 9}}
+    assert base == {"a": {"b": 1, "c": 2}}
+
+
+def test_load_config_from_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"train": {"epochs": 3}}), encoding="utf-8")
+    config = load_config(path)
+    assert config.train.epochs == 3
+    assert config.checkpoint_path() == (tmp_path / "checkpoints" / "ctc.pt")
+
+
+def test_load_config_missing_file(tmp_path):
+    with pytest.raises(ConfigError, match="not found"):
+        load_config(tmp_path / "nope.yaml")
+
+
+def test_load_config_rejects_non_mapping(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("- 1\n- 2\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="mapping"):
+        load_config(path)
+
+
+def test_load_config_overrides(tmp_path):
+    config = load_config(None, overrides={"decode": {"beam_width": 4}})
+    assert config.decode.beam_width == 4
+    assert config.features.n_mels == 40

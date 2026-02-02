@@ -184,3 +184,41 @@ def collapse_path(path: Sequence[int], blank: int = 0) -> list[int]:
             collapsed.append(token)
         previous = token
     return collapsed
+
+
+def collapse_path_with_positions(
+    path: Sequence[int], blank: int = 0
+) -> list[tuple[int, int]]:
+    """Collapse a frame path, keeping the frame index that emitted each token.
+
+    The index is the position in the input path (i.e. the model output frame),
+    which is what lets the streaming decoder drop the tokens that came from the
+    overlapped audio instead of guessing by token identity.
+    """
+    collapsed: list[tuple[int, int]] = []
+    previous: int | None = None
+    for frame, token in enumerate(path):
+        token = int(token)
+        if token != previous and token != int(blank):
+            collapsed.append((token, frame))
+        previous = token
+    return collapsed
+
+
+def greedy_decode(log_probs: torch.Tensor, blank: int = 0) -> list[list[int]]:
+    """Best-path decode for a ``(T, N, C)`` batch of log probabilities."""
+    if log_probs.ndim != 3:
+        raise CtcError("greedy_decode expects (time, batch, classes)")
+    best = torch.argmax(log_probs, dim=-1)  # (T, N)
+    batch = log_probs.shape[1]
+    results: list[list[int]] = []
+    for index in range(batch):
+        results.append(collapse_path(best[:, index].tolist(), blank))
+    return results
+
+
+def greedy_decode_single(log_probs: torch.Tensor, blank: int = 0) -> list[int]:
+    """Best-path decode for one ``(T, C)`` matrix."""
+    if log_probs.ndim != 2:
+        raise CtcError("greedy_decode_single expects (time, classes)")
+    return collapse_path(torch.argmax(log_probs, dim=-1).tolist(), blank)
