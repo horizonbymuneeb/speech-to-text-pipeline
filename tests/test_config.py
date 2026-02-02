@@ -125,3 +125,28 @@ def test_feature_config_validation():
         FeatureConfig(n_mels=200)
     with pytest.raises(ConfigError, match="fmin_hz"):
         FeatureConfig(fmin_hz=4000.0, fmax_hz=3000.0)
+
+
+def test_synth_config_validation():
+    with pytest.raises(ConfigError, match="duplicates"):
+        SynthConfig(vocabulary=("kasa", "kasa"))
+    with pytest.raises(ConfigError, match="lowercase"):
+        SynthConfig(vocabulary=("Kasa",))
+    with pytest.raises(ConfigError, match="words_per_utterance"):
+        SynthConfig(words_per_utterance=(5, 2))
+
+
+def test_model_and_decode_validation():
+    with pytest.raises(ConfigError, match="channels"):
+        ModelConfig(channels=2)
+    with pytest.raises(ConfigError, match="overlap_ms"):
+        DecodeConfig(chunk_ms=400.0, overlap_ms=400.0)
+    with pytest.raises(ConfigError, match="beam_width"):
+        DecodeConfig(beam_width=0)
+
+
+def test_train_config_validation():
+    with pytest.raises(ConfigError, match="epochs"):
+        TrainConfig(epochs=0)
+    with pytest.raises(ConfigError, match="learning_rate"):
+        TrainConfig(learning_rate=0.0)
