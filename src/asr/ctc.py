@@ -222,3 +222,80 @@ def greedy_decode_single(log_probs: torch.Tensor, blank: int = 0) -> list[int]:
     if log_probs.ndim != 2:
         raise CtcError("greedy_decode_single expects (time, classes)")
     return collapse_path(torch.argmax(log_probs, dim=-1).tolist(), blank)
+
+
+def prefix_beam_decode(
+    log_probs: torch.Tensor, beam_width: int = 8, blank: int = 0
+) -> BeamResult:
+    """Prefix beam search over one ``(T, C)`` log-probability matrix.
+
+    ``beam_width=1`` keeps a single prefix and therefore behaves like greedy
+    decoding; larger widths track the blank-ending and non-blank-ending
+    probability of each prefix so that an ambiguous frame can still be recovered.
+    """
+    if log_probs.ndim != 2:
+        raise CtcError("prefix_beam_decode expects (time, classes)")
+    if beam_width < 1:
+        raise CtcError("beam_width must be >= 1")
+    time_steps, classes = log_probs.shape
+    if time_steps == 0:
+        return BeamResult(tokens=(), score=0.0)
+    if not 0 <= int(blank) < classes:
+        raise CtcError("blank index is out of range")
+
+    probs = log_probs.detach().cpu().tolist()
+    # prefix -> (log p ending in blank, log p ending in a label)
+    beams: dict[tuple[int, ...], tuple[float, float]] = {(): (0.0, NEG_INF)}
+    for step in range(time_steps):
+        frame = probs[step]
+        next_beams: dict[tuple[int, ...], list[float]] = {}
+        for prefix, (p_blank, p_non_blank) in beams.items():
+            total = log_add(p_blank, p_non_blank)
+            entry = next_beams.setdefault(prefix, [NEG_INF, NEG_INF])
+            entry[0] = log_add(entry[0], total + frame[blank])
+            for token in range(classes):
+                if token == blank:
+                    continue
+                probability = frame[token]
+                if prefix and token == prefix[-1]:
+                    same = next_beams.setdefault(prefix, [NEG_INF, NEG_INF])
+                    same[1] = log_add(same[1], p_non_blank + probability)
+                    extended_prefix = prefix + (token,)
+                    fresh = next_beams.setdefault(extended_prefix, [NEG_INF, NEG_INF])
+                    fresh[1] = log_add(fresh[1], p_blank + probability)
+                else:
+                    extended_prefix = prefix + (token,)
+                    fresh = next_beams.setdefault(extended_prefix, [NEG_INF, NEG_INF])
+                    fresh[1] = log_add(fresh[1], total + probability)
+        ranked = sorted(
+            next_beams.items(),
+            key=lambda item: log_add(item[1][0], item[1][1]),
+            reverse=True,
+        )[:beam_width]
+        beams = {prefix: (values[0], values[1]) for prefix, values in ranked}
+
+    best_prefix, (best_blank, best_non_blank) = max(
+        beams.items(), key=lambda item: log_add(item[1][0], item[1][1])
+    )
+    return BeamResult(tokens=tuple(best_prefix), score=log_add(best_blank, best_non_blank))
+
+
+def batch_prefix_beam_decode(
+    log_probs: torch.Tensor, beam_width: int = 8, blank: int = 0
+) -> list[BeamResult]:
+    """Prefix beam search over a ``(T, N, C)`` batch."""
+    if log_probs.ndim != 3:
+        raise CtcError("batch_prefix_beam_decode expects (time, batch, classes)")
+    return [
+        prefix_beam_decode(log_probs[:, index, :], beam_width=beam_width, blank=blank)
+        for index in range(log_probs.shape[1])
+    ]
+
+
+def decode_matrix(
+    log_probs: torch.Tensor, beam_width: int = 1, blank: int = 0
+) -> list[int]:
+    """Decode one matrix with either greedy or beam search, by beam width."""
+    if beam_width <= 1:
+        return greedy_decode_single(log_probs, blank)
+    return list(prefix_beam_decode(log_probs, beam_width=beam_width, blank=blank).tokens)

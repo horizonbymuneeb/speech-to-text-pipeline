@@ -100,3 +100,28 @@ def test_load_config_overrides(tmp_path):
     config = load_config(None, overrides={"decode": {"beam_width": 4}})
     assert config.decode.beam_width == 4
     assert config.features.n_mels == 40
+
+
+def test_audio_config_validation():
+    with pytest.raises(ConfigError, match="sample_rate"):
+        AudioConfig(sample_rate=1000)
+    with pytest.raises(ConfigError, match="peak_amplitude"):
+        AudioConfig(peak_amplitude=1.5)
+
+
+def test_vad_config_validation():
+    with pytest.raises(ConfigError, match="hop_ms"):
+        VadConfig(frame_ms=10.0, hop_ms=25.0)
+    with pytest.raises(ConfigError, match="max_zcr"):
+        VadConfig(max_zcr=2.0)
+    with pytest.raises(ConfigError, match="non-negative"):
+        VadConfig(hangover_ms=-1.0)
+
+
+def test_feature_config_validation():
+    with pytest.raises(ConfigError, match="power of two"):
+        FeatureConfig(n_fft=250)
+    with pytest.raises(ConfigError, match="n_mels"):
+        FeatureConfig(n_mels=200)
+    with pytest.raises(ConfigError, match="fmin_hz"):
+        FeatureConfig(fmin_hz=4000.0, fmax_hz=3000.0)
