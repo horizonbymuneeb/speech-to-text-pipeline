@@ -150,3 +150,15 @@ def test_train_config_validation():
         TrainConfig(epochs=0)
     with pytest.raises(ConfigError, match="learning_rate"):
         TrainConfig(learning_rate=0.0)
+
+
+def test_checkpoint_path_relative_and_absolute(tmp_path):
+    absolute = tmp_path / "abs.pt"
+    config = TrainConfig(checkpoint=str(absolute))
+    assert config.checkpoint_path(tmp_path) == absolute
+    relative = TrainConfig(checkpoint="ckpt/model.pt")
+    assert relative.checkpoint_path(tmp_path) == (tmp_path / "ckpt" / "model.pt").resolve()
+
+
+def test_feature_dim_without_deltas():
+    assert FeatureConfig(use_deltas=False).output_dim == 40

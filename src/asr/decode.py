@@ -32,3 +32,77 @@ from asr.features import FeatureExtractor
 from asr.vocab import Vocabulary
 
 EPSILON = 1e-8
+
+
+class DecodeError(ValueError):
+    """Raised for impossible chunk plans or mismatched inputs."""
+
+
+@dataclass(frozen=True)
+class ChunkPlan:
+    """Which sample ranges the stream is cut into.
+
+    Contract: ``num_chunks`` counts *windows*, not boundaries. The first window
+    starts at sample 0, every following window starts ``hop_samples`` later, and
+    the last window is clipped to the end of the stream, so
+    ``num_chunks == 1 + ceil((total - chunk) / hop)`` for a stream longer than one
+    chunk. A stream shorter than one chunk is a single window.
+    """
+
+    total_samples: int
+    chunk_samples: int
+    overlap_samples: int
+
+    def __post_init__(self) -> None:
+        if self.total_samples <= 0:
+            raise DecodeError("total_samples must be positive")
+        if self.chunk_samples <= 0:
+            raise DecodeError("chunk_samples must be positive")
+        if self.overlap_samples < 0:
+            raise DecodeError("overlap_samples must be non-negative")
+        if self.overlap_samples >= self.chunk_samples:
+            raise DecodeError("overlap_samples must be smaller than chunk_samples")
+
+    @property
+    def hop_samples(self) -> int:
+        """Samples advanced between chunk starts."""
+        return self.chunk_samples - self.overlap_samples
+
+    @property
+    def num_chunks(self) -> int:
+        if self.total_samples <= self.chunk_samples:
+            return 1
+        return 1 + int(np.ceil((self.total_samples - self.chunk_samples) / self.hop_samples))
+
+    def start(self, index: int) -> int:
+        """First sample of chunk ``index``."""
+        if not 0 <= index < self.num_chunks:
+            raise DecodeError(f"chunk index {index} is out of range")
+        return index * self.hop_samples
+
+    def end(self, index: int) -> int:
+        """One past the last sample of chunk ``index``."""
+        return min(self.total_samples, self.start(index) + self.chunk_samples)
+
+    def ranges(self) -> list[tuple[int, int]]:
+        """Every ``(start, end)`` sample range in order."""
+        return [(self.start(index), self.end(index)) for index in range(self.num_chunks)]
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "total_samples": self.total_samples,
+            "chunk_samples": self.chunk_samples,
+            "overlap_samples": self.overlap_samples,
+            "num_chunks": self.num_chunks,
+        }
+
+
+def plan_chunks(
+    total_samples: int, chunk_samples: int, overlap_samples: int
+) -> ChunkPlan:
+    """Build a chunk plan for a stream of ``total_samples`` samples."""
+    return ChunkPlan(
+        total_samples=int(total_samples),
+        chunk_samples=int(chunk_samples),
+        overlap_samples=int(overlap_samples),
+    )
