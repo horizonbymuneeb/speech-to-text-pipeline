@@ -106,3 +106,48 @@ def plan_chunks(
         chunk_samples=int(chunk_samples),
         overlap_samples=int(overlap_samples),
     )
+
+
+def longest_overlap(existing: Sequence[int], new: Sequence[int]) -> int:
+    """Length of the longest suffix of ``existing`` that prefixes ``new``.
+
+    This is how the seam between two chunks is found: the shared tokens are the
+    ones the second chunk re-decoded from the overlapped audio.
+    """
+    limit = min(len(existing), len(new))
+    for length in range(limit, 0, -1):
+        if list(existing[len(existing) - length :]) == list(new[:length]):
+            return length
+    return 0
+
+
+def merge_tokens(existing: Sequence[int], new: Sequence[int]) -> tuple[list[int], int]:
+    """Append the non-duplicated tail of ``new``; returns ``(tokens, overlap)``."""
+    overlap = longest_overlap(existing, new)
+    merged = list(existing) + list(new[overlap:])
+    return merged, overlap
+
+
+@dataclass(frozen=True)
+class DecodeResult:
+    """The output of one streaming decode."""
+
+    tokens: tuple[int, ...]
+    words: tuple[str, ...]
+    chunk_count: int
+    chunk_tokens: tuple[int, ...]
+    chunk_overlaps: tuple[int, ...]
+    num_frames: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "tokens": list(self.tokens),
+            "words": list(self.words),
+            "chunk_count": self.chunk_count,
+            "chunk_tokens": list(self.chunk_tokens),
+            "chunk_overlaps": list(self.chunk_overlaps),
+            "num_frames": self.num_frames,
+        }
+
+    def transcript(self) -> str:
+        return " ".join(self.words)
