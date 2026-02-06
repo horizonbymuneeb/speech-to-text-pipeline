@@ -11,3 +11,10 @@ from __future__ import annotations
 import numpy as np
 
 EPSILON = 1e-10
+MEL_CONSTANT = 2595.0
+MEL_LOG_BASE = 10.0
+MEL_BREAK_HZ = 700.0
+
+
+class DspError(ValueError):
+    """Raised for shapes and parameters that cannot be processed."""
