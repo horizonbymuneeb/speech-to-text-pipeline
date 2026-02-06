@@ -151,3 +151,152 @@ class DecodeResult:
 
     def transcript(self) -> str:
         return " ".join(self.words)
+
+
+class AcousticModel(Protocol):
+    """The slice of the model interface the decoder needs."""
+
+    def forward(
+        self, features: torch.Tensor, lengths: torch.Tensor | None = None, state: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]: ...
+
+
+class StreamingDecoder:
+    """Decode a waveform chunk by chunk, carrying state across the seams."""
+
+    def __init__(
+        self,
+        model: AcousticModel,
+        extractor: FeatureExtractor,
+        vocabulary: Vocabulary,
+        decode_config: DecodeConfig,
+        feature_config: FeatureConfig | None = None,
+        sample_rate: int | None = None,
+    ) -> None:
+        self.model = model
+        self.extractor = extractor
+        self.vocabulary = vocabulary
+        self.config = decode_config
+        self.feature_config = feature_config or extractor.config
+        self.sample_rate = sample_rate or extractor.sample_rate
+
+    def reset(self) -> None:
+        """Hook for stream-level state; chunk features are stateless here."""
+
+    def chunk_plan(self, num_samples: int) -> ChunkPlan:
+        """Chunk plan for a stream of ``num_samples`` samples."""
+        return plan_chunks(
+            num_samples,
+            self.config.chunk_samples(self.sample_rate),
+            self.config.overlap_samples(self.sample_rate),
+        )
+
+    def _features(self, samples: np.ndarray) -> np.ndarray:
+        """Chunk features.
+
+        The extractor applies CMVN from fixed corpus statistics when it has them,
+        so a chunk is normalised the same way it would be inside a full
+        utterance. Per-chunk normalisation would make the features drift at every
+        seam, which is the streaming equivalent of a distribution shift.
+        """
+        return self.extractor.transform(samples)
+
+    def overlap_output_frames(self) -> int:
+        """How many model output frames correspond to the overlapped audio."""
+        hop = self.extractor.hop_length
+        factor = int(getattr(self.model, "downsample_factor", 2) or 1)
+        overlap_features = self.config.overlap_samples(self.sample_rate) // max(1, hop)
+        return int(overlap_features // max(1, factor))
+
+    def decode_chunk(
+        self, samples: np.ndarray, state: torch.Tensor | None = None
+    ) -> tuple[list[int], torch.Tensor | None]:
+        """Decode one chunk, returning its tokens and the new recurrent state."""
+        timed, new_state = self.decode_chunk_timed(samples, state)
+        return [token for token, _ in timed], new_state
+
+    def decode_chunk_timed(
+        self, samples: np.ndarray, state: torch.Tensor | None = None
+    ) -> tuple[list[tuple[int, int]], torch.Tensor | None]:
+        """Decode one chunk, returning ``(token, output_frame)`` pairs.
+
+        Beam search does not expose a frame alignment, so in beam mode the frame
+        index is reported as -1 and the caller falls back to identity matching.
+        """
+        if np.asarray(samples).size == 0:
+            raise DecodeError("cannot decode an empty chunk")
+        features = self._features(np.asarray(samples))
+        tensor = torch.from_numpy(features).unsqueeze(0)
+        with torch.no_grad():
+            log_probs, _, new_state = self.model.forward(tensor, state=state)
+        matrix = log_probs[:, 0, :]
+        if self.config.beam_width > 1:
+            results = batch_prefix_beam_decode(
+                log_probs, beam_width=self.config.beam_width, blank=self.config.blank_index
+            )
+            return [(token, -1) for token in results[0].tokens], new_state
+        path = torch.argmax(matrix, dim=-1).tolist()
+        return collapse_path_with_positions(path, blank=self.config.blank_index), new_state
+
+    def decode_samples(self, samples: np.ndarray) -> DecodeResult:
+        """Decode a whole waveform in chunks."""
+        signal = np.asarray(samples)
+        if signal.ndim != 1:
+            raise DecodeError("samples must be mono (1-D)")
+        if signal.size == 0:
+            raise DecodeError("cannot decode an empty signal")
+        self.reset()
+        plan = self.chunk_plan(signal.size)
+        state: torch.Tensor | None = None
+        tokens: list[int] = []
+        chunk_tokens: list[int] = []
+        overlaps: list[int] = []
+        frames = 0
+        seam = self.overlap_output_frames()
+        for index in range(plan.num_chunks):
+            start, end = plan.start(index), plan.end(index)
+            chunk = signal[start:end]
+            timed, state = self.decode_chunk_timed(chunk, state)
+            chunk_tokens.append(len(timed))
+            if index == 0 or any(frame < 0 for _, frame in timed):
+                # no frame information (beam search): match by token identity
+                plain = [token for token, _ in timed]
+                tokens, overlap = merge_tokens(tokens, plain)
+            else:
+                # Greedy decode: drop everything emitted from the overlapped
+                # audio. Dropping by frame instead of by token identity is what
+                # keeps a genuine repeat ("timo timo") from being merged into
+                # one token when it happens to sit on a chunk seam.
+                kept = [token for token, frame in timed if frame >= seam]
+                tokens.extend(kept)
+                overlap = len(timed) - len(kept)
+            overlaps.append(overlap)
+            frames += int(self.extractor.stats(chunk).num_frames)
+        words = tuple(self.vocabulary.decode(tokens))
+        return DecodeResult(
+            tokens=tuple(tokens),
+            words=words,
+            chunk_count=plan.num_chunks,
+            chunk_tokens=tuple(chunk_tokens),
+            chunk_overlaps=tuple(overlaps),
+            num_frames=frames,
+        )
+
+    def decode_words(self, samples: np.ndarray) -> list[str]:
+        """Convenience wrapper returning only the transcript words."""
+        return list(self.decode_samples(samples).words)
+
+
+def decode_offline(
+    model: AcousticModel,
+    extractor: FeatureExtractor,
+    vocabulary: Vocabulary,
+    samples: np.ndarray,
+    blank: int = 0,
+) -> list[int]:
+    """Decode a whole utterance in one pass (no chunking) — the baseline."""
+    features = extractor.transform(np.asarray(samples))
+    tensor = torch.from_numpy(features).unsqueeze(0)
+    with torch.no_grad():
+        log_probs, _, _ = model.forward(tensor)
+    return decode_matrix(log_probs[:, 0, :], beam_width=1, blank=blank)
