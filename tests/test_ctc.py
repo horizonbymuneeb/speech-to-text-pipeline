@@ -23,3 +23,5 @@ from asr.ctc import (
     prefix_beam_decode,
     sequence_log_prob,
 )
+
+torch.manual_seed(0)
