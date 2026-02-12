@@ -74,3 +74,27 @@ def pre_emphasis(samples: np.ndarray, coefficient: float = 0.97) -> np.ndarray:
     emphasised[0] = signal[0]
     emphasised[1:] = signal[1:] - coefficient * signal[:-1]
     return emphasised
+
+
+def hann_window(length: int) -> np.ndarray:
+    """Periodic Hann window (the form that keeps overlapped frames summing flat)."""
+    if length < 2:
+        raise DspError("window length must be >= 2")
+    return 0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(length) / length)
+
+
+def power_spectrum(frames: np.ndarray, n_fft: int) -> np.ndarray:
+    """Windowed magnitude-squared spectrum, shape ``(n_frames, n_fft//2 + 1)``."""
+    if frames.ndim != 2:
+        raise DspError("frames must be 2-D")
+    if n_fft < frames.shape[1]:
+        raise DspError("n_fft must be at least the frame length")
+    window = hann_window(frames.shape[1])
+    windowed = frames * window
+    spectrum = np.fft.rfft(windowed, n=n_fft, axis=1)
+    return np.square(np.abs(spectrum))
+
+
+def hz_to_mel(frequency_hz: np.ndarray | float) -> np.ndarray:
+    """HTK mel scale: ``2595 * log10(1 + f / 700)``."""
+    return MEL_CONSTANT * np.log10(1.0 + np.asarray(frequency_hz, dtype=np.float64) / MEL_BREAK_HZ)

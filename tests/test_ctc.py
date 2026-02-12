@@ -80,3 +80,42 @@ def test_ctc_loss_single_frame_exact_value():
         log_probs, targets, torch.tensor([1]), torch.tensor([1]), reduction="sum"
     )
     assert float(loss) == pytest.approx(float(-log_probs[0, 0, 1]), abs=1e-6)
+
+
+def test_ctc_loss_reductions_agree():
+    log_probs = torch.log_softmax(torch.randn(8, 2, 4), dim=-1)
+    targets = torch.tensor([[1, 2], [3, 0]])
+    inputs = torch.tensor([8, 8])
+    lengths = torch.tensor([2, 1])
+    none = ctc_loss(log_probs, targets, inputs, lengths, reduction="none")
+    total = ctc_loss(log_probs, targets, inputs, lengths, reduction="sum")
+    mean = ctc_loss(log_probs, targets, inputs, lengths, reduction="mean")
+    assert float(total) == pytest.approx(float(none.sum()), abs=1e-5)
+    # torch convention: per-sample loss / target length, then batch mean
+    expected_mean = float((none / lengths.to(none.dtype)).mean())
+    assert float(mean) == pytest.approx(expected_mean, abs=1e-5)
+    assert float(mean) != pytest.approx(float(none.mean()))
+
+
+def test_ctc_loss_validation():
+    log_probs = torch.log_softmax(torch.randn(5, 2, 3), dim=-1)
+    targets = torch.tensor([[1, 2], [1, 2]])
+    inputs = torch.tensor([5, 5])
+    lengths = torch.tensor([2, 2])
+    with pytest.raises(CtcError, match="\\(time, batch, classes\\)"):
+        ctc_loss(log_probs[0], targets, inputs, lengths)
+    with pytest.raises(CtcError, match="targets"):
+        ctc_loss(log_probs, targets.unsqueeze(0), inputs, lengths)
+    with pytest.raises(CtcError, match="batch size"):
+        ctc_loss(log_probs, targets[:1], inputs, lengths)
+    with pytest.raises(CtcError, match="reduction"):
+        ctc_loss(log_probs, targets, inputs, lengths, reduction="median")
+    with pytest.raises(CtcError, match="exceeds"):
+        ctc_loss(log_probs[:, :1, :], torch.tensor([[1, 2, 1, 2, 1, 2]]), inputs[:1], torch.tensor([6]))
+
+
+def test_collapse_path_rules():
+    assert collapse_path([1, 1, 1]) == [1]
+    assert collapse_path([1, 0, 1]) == [1, 1]
+    assert collapse_path([0, 0, 0]) == []
+    assert collapse_path([1, 2, 2, 0, 3]) == [1, 2, 3]
