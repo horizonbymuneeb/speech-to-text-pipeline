@@ -98,3 +98,56 @@ def power_spectrum(frames: np.ndarray, n_fft: int) -> np.ndarray:
 def hz_to_mel(frequency_hz: np.ndarray | float) -> np.ndarray:
     """HTK mel scale: ``2595 * log10(1 + f / 700)``."""
     return MEL_CONSTANT * np.log10(1.0 + np.asarray(frequency_hz, dtype=np.float64) / MEL_BREAK_HZ)
+
+
+def mel_to_hz(mel: np.ndarray | float) -> np.ndarray:
+    """Inverse of :func:`hz_to_mel`."""
+    return MEL_BREAK_HZ * (10.0 ** (np.asarray(mel, dtype=np.float64) / MEL_CONSTANT) - 1.0)
+
+
+def mel_filterbank(
+    sample_rate: int,
+    n_fft: int,
+    n_mels: int,
+    fmin_hz: float = 0.0,
+    fmax_hz: float | None = None,
+) -> np.ndarray:
+    """Triangular mel filters, shape ``(n_mels, n_fft//2 + 1)``.
+
+    Filters are normalised to unit area so that a louder vowel raises every band
+    by the same factor; without that, wide high-frequency filters would dominate
+    the feature vector.
+    """
+    if sample_rate <= 0:
+        raise DspError("sample_rate must be positive")
+    if n_mels < 1:
+        raise DspError("n_mels must be >= 1")
+    nyquist = sample_rate / 2.0
+    top = nyquist if fmax_hz is None else float(fmax_hz)
+    if not 0.0 <= fmin_hz < top <= nyquist:
+        raise DspError("need 0 <= fmin_hz < fmax_hz <= sample_rate/2")
+    mel_points = np.linspace(hz_to_mel(fmin_hz), hz_to_mel(top), n_mels + 2)
+    hz_points = mel_to_hz(mel_points)
+    bins = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
+    filters = np.zeros((n_mels, bins.size), dtype=np.float64)
+    for index in range(n_mels):
+        left, centre, right = hz_points[index], hz_points[index + 1], hz_points[index + 2]
+        rising = (bins - left) / max(centre - left, EPSILON)
+        falling = (right - bins) / max(right - centre, EPSILON)
+        triangle = np.maximum(0.0, np.minimum(rising, falling))
+        area = np.sum(triangle)
+        if area > 0.0:
+            triangle = triangle / area
+        filters[index] = triangle
+    return filters
+
+
+def apply_filterbank(power: np.ndarray, filters: np.ndarray) -> np.ndarray:
+    """Project power spectra onto mel filters."""
+    if power.ndim != 2:
+        raise DspError("power must be 2-D")
+    if filters.shape[1] != power.shape[1]:
+        raise DspError(
+            f"filterbank has {filters.shape[1]} bins but the spectrum has {power.shape[1]}"
+        )
+    return power @ filters.T

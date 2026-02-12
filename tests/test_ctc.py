@@ -119,3 +119,32 @@ def test_collapse_path_rules():
     assert collapse_path([1, 0, 1]) == [1, 1]
     assert collapse_path([0, 0, 0]) == []
     assert collapse_path([1, 2, 2, 0, 3]) == [1, 2, 3]
+
+
+def test_greedy_decode_batch():
+    log_probs = torch.full((4, 4, 3), -10.0)
+    log_probs[0, 0, 1] = 10.0  # batch 0: a single token
+    log_probs[0, 1, 1] = 10.0  # batch 1: the same token twice -> collapses
+    log_probs[1, 1, 1] = 10.0
+    log_probs[0, 3, 2] = 10.0  # batch 3: a different token
+    decoded = greedy_decode(log_probs)
+    assert decoded[0] == [1]
+    assert decoded[1] == [1]
+    assert decoded[2] == []
+    assert decoded[3] == [2]
+
+
+def test_greedy_decode_single_and_validation():
+    matrix = torch.full((3, 3), -10.0)
+    matrix[:, 2] = 10.0
+    assert greedy_decode_single(matrix) == [2]
+    with pytest.raises(CtcError):
+        greedy_decode_single(matrix.unsqueeze(0))
+
+
+def test_prefix_beam_matches_greedy_on_peaked_matrix():
+    torch.manual_seed(3)
+    logits = torch.randn(9, 4) * 6.0
+    log_probs = torch.log_softmax(logits, dim=-1)
+    beam = prefix_beam_decode(log_probs, beam_width=5)
+    assert list(beam.tokens) == greedy_decode_single(log_probs)
