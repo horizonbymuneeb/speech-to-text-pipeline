@@ -148,3 +148,26 @@ def test_prefix_beam_matches_greedy_on_peaked_matrix():
     log_probs = torch.log_softmax(logits, dim=-1)
     beam = prefix_beam_decode(log_probs, beam_width=5)
     assert list(beam.tokens) == greedy_decode_single(log_probs)
+
+
+def test_beam_score_matches_sequence_log_prob():
+    """With a wide enough beam the reported score is the exact CTC probability."""
+    torch.manual_seed(4)
+    log_probs = torch.log_softmax(torch.randn(3, 3), dim=-1)
+    beam = prefix_beam_decode(log_probs, beam_width=50)
+    expected = sequence_log_prob(log_probs, beam.tokens)
+    assert beam.score == pytest.approx(expected, abs=1e-4)
+
+
+def test_beam_width_one_equals_greedy_on_peaked_input():
+    torch.manual_seed(5)
+    log_probs = torch.log_softmax(torch.randn(6, 3) * 5.0, dim=-1)
+    assert list(prefix_beam_decode(log_probs, beam_width=1).tokens) == greedy_decode_single(log_probs)
+
+
+def test_beam_search_is_never_worse_than_greedy():
+    """On an ambiguous frame the beam keeps alternatives; its score must win."""
+    log_probs = torch.log(torch.tensor([[0.4, 0.35, 0.25], [0.4, 0.35, 0.25], [0.4, 0.35, 0.25]]))
+    greedy = greedy_decode_single(log_probs)
+    beam = prefix_beam_decode(log_probs, beam_width=20)
+    assert beam.score >= sequence_log_prob(log_probs, greedy) - 1e-6

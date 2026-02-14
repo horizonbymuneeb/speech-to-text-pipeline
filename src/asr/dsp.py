@@ -151,3 +151,32 @@ def apply_filterbank(power: np.ndarray, filters: np.ndarray) -> np.ndarray:
             f"filterbank has {filters.shape[1]} bins but the spectrum has {power.shape[1]}"
         )
     return power @ filters.T
+
+
+def log_compress(values: np.ndarray, floor: float = EPSILON) -> np.ndarray:
+    """Natural log with a floor, so silent bands become a large negative number."""
+    if floor <= 0:
+        raise DspError("floor must be positive")
+    return np.log(np.maximum(values, floor))
+
+
+def cmvn(features: np.ndarray, epsilon: float = 1e-8) -> np.ndarray:
+    """Cepstral mean and variance normalisation, per feature dimension."""
+    if features.ndim != 2:
+        raise DspError("features must be 2-D")
+    if features.shape[0] == 0:
+        return features.copy()
+    mean = features.mean(axis=0, keepdims=True)
+    std = features.std(axis=0, keepdims=True)
+    return (features - mean) / np.maximum(std, epsilon)
+
+
+def cmvn_stats(features: np.ndarray, epsilon: float = 1e-8) -> tuple[np.ndarray, np.ndarray]:
+    """Mean and standard deviation per feature dimension, with a std floor."""
+    if features.ndim != 2:
+        raise DspError("features must be 2-D")
+    if features.shape[0] == 0:
+        raise DspError("cannot compute statistics of zero frames")
+    mean = features.mean(axis=0)
+    std = np.maximum(features.std(axis=0), epsilon)
+    return mean.astype(np.float64), std.astype(np.float64)
