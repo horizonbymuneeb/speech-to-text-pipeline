@@ -171,3 +171,29 @@ def test_beam_search_is_never_worse_than_greedy():
     greedy = greedy_decode_single(log_probs)
     beam = prefix_beam_decode(log_probs, beam_width=20)
     assert beam.score >= sequence_log_prob(log_probs, greedy) - 1e-6
+
+
+def test_all_blank_decodes_to_empty():
+    log_probs = torch.full((5, 3), -10.0)
+    log_probs[:, 0] = 10.0
+    beam = prefix_beam_decode(torch.log_softmax(log_probs, dim=-1), beam_width=4)
+    assert beam.tokens == ()
+    assert greedy_decode_single(torch.log_softmax(log_probs, dim=-1)) == []
+
+
+def test_batch_beam_and_matrix_dispatch():
+    log_probs = torch.log_softmax(torch.randn(5, 2, 4), dim=-1)
+    results = batch_prefix_beam_decode(log_probs, beam_width=3)
+    assert len(results) == 2
+    assert all(isinstance(result, BeamResult) for result in results)
+    assert decode_matrix(log_probs[:, 0, :], beam_width=1) == greedy_decode_single(log_probs[:, 0, :])
+    assert decode_matrix(log_probs[:, 0, :], beam_width=3) == list(results[0].tokens)
+
+
+def test_beam_validation():
+    with pytest.raises(CtcError, match="beam_width"):
+        prefix_beam_decode(torch.zeros(3, 3), beam_width=0)
+    with pytest.raises(CtcError, match="blank index"):
+        prefix_beam_decode(torch.zeros(3, 3), beam_width=2, blank=9)
+    with pytest.raises(CtcError, match="time, batch"):
+        batch_prefix_beam_decode(torch.zeros(3, 3))

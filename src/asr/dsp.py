@@ -180,3 +180,42 @@ def cmvn_stats(features: np.ndarray, epsilon: float = 1e-8) -> tuple[np.ndarray,
     mean = features.mean(axis=0)
     std = np.maximum(features.std(axis=0), epsilon)
     return mean.astype(np.float64), std.astype(np.float64)
+
+
+def apply_cmvn(features: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    """Normalise features with fixed statistics (the streaming-safe form)."""
+    if features.ndim != 2:
+        raise DspError("features must be 2-D")
+    mean = np.asarray(mean, dtype=np.float64)
+    std = np.asarray(std, dtype=np.float64)
+    if mean.shape != (features.shape[1],) or std.shape != (features.shape[1],):
+        raise DspError("CMVN statistics do not match the feature dimension")
+    return (features - mean) / np.maximum(std, EPSILON)
+
+
+def delta(features: np.ndarray, width: int = 2) -> np.ndarray:
+    """Regression deltas with edge replication.
+
+    ``width`` is the number of frames on each side; the denominator is
+    ``2 * sum(i^2)`` so the result is invariant to the frame rate.
+    """
+    if features.ndim != 2:
+        raise DspError("features must be 2-D")
+    if width < 1:
+        raise DspError("delta width must be >= 1")
+    count = features.shape[0]
+    if count == 0:
+        return features.copy()
+    padded = np.pad(features, ((width, width), (0, 0)), mode="edge")
+    denominator = 2.0 * sum(index * index for index in range(1, width + 1))
+    result = np.zeros_like(features, dtype=np.float64)
+    for index in range(1, width + 1):
+        result += index * (padded[width + index : width + index + count] - padded[width - index : width - index + count])
+    return result / denominator
+
+
+def stack_deltas(features: np.ndarray, width: int = 2) -> np.ndarray:
+    """Concatenate ``[features, delta, delta-delta]`` along the feature axis."""
+    first = delta(features, width)
+    second = delta(first, width)
+    return np.concatenate([features, first, second], axis=1)
