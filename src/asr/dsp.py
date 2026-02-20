@@ -219,3 +219,17 @@ def stack_deltas(features: np.ndarray, width: int = 2) -> np.ndarray:
     first = delta(features, width)
     second = delta(first, width)
     return np.concatenate([features, first, second], axis=1)
+
+
+def frame_times(num_frames: int, hop_length: int, sample_rate: int) -> np.ndarray:
+    """Centre time of each frame in seconds."""
+    if sample_rate <= 0:
+        raise DspError("sample_rate must be positive")
+    return np.arange(num_frames, dtype=np.float64) * hop_length / float(sample_rate)
+
+
+def signal_duration(samples: np.ndarray, sample_rate: int) -> float:
+    """Duration of a signal in seconds."""
+    if sample_rate <= 0:
+        raise DspError("sample_rate must be positive")
+    return float(np.asarray(samples).size) / float(sample_rate)
