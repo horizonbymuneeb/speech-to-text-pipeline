@@ -33,3 +33,33 @@ from asr.dsp import (
     pre_emphasis,
     stack_deltas,
 )
+
+LOG_FLOOR = 1e-10
+
+
+class FeatureError(ValueError):
+    """Raised when a waveform cannot be turned into features."""
+
+
+def log_mel_spectrogram(
+    samples: np.ndarray,
+    config: FeatureConfig,
+    sample_rate: int,
+    *,
+    apply_pre_emphasis: bool = True,
+) -> np.ndarray:
+    """Compute ``(n_frames, n_mels)`` log-mel energies."""
+    signal = np.asarray(samples, dtype=np.float64)
+    if signal.ndim != 1:
+        raise FeatureError("samples must be mono (1-D)")
+    if signal.size == 0:
+        raise FeatureError("cannot extract features from an empty signal")
+    if apply_pre_emphasis:
+        signal = pre_emphasis(signal, config.pre_emphasis)
+    frames = frame_signal(signal, config.frame_length(sample_rate), config.hop_length(sample_rate))
+    spectrum = power_spectrum(frames, config.n_fft)
+    filters = mel_filterbank(
+        sample_rate, config.n_fft, config.n_mels, config.fmin_hz, config.fmax_hz
+    )
+    mel_energies = apply_filterbank(spectrum, filters)
+    return log_compress(mel_energies, LOG_FLOOR)
