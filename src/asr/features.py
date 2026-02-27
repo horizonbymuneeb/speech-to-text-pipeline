@@ -63,3 +63,37 @@ def log_mel_spectrogram(
     )
     mel_energies = apply_filterbank(spectrum, filters)
     return log_compress(mel_energies, LOG_FLOOR)
+
+
+def normalise_features(
+    features: np.ndarray,
+    config: FeatureConfig,
+    stats: tuple[np.ndarray, np.ndarray] | None = None,
+) -> np.ndarray:
+    """Apply CMVN when configured.
+
+    ``stats`` holds global mean/std computed once over a training corpus. When it
+    is given the normalisation is identical for every chunk, which is what makes
+    streaming features match offline features; without it each call normalises
+    against its own frames (fine for whole utterances, wrong across chunks).
+    """
+    if not config.cmvn:
+        return features
+    if stats is not None:
+        mean, std = stats
+        return apply_cmvn(features, mean, std)
+    return cepstral_normalise(features)
+
+
+def with_deltas(features: np.ndarray, config: FeatureConfig) -> np.ndarray:
+    """Append delta and delta-delta features when configured."""
+    return stack_deltas(features) if config.use_deltas else features
+
+
+def extract_features(
+    samples: np.ndarray, config: FeatureConfig, sample_rate: int
+) -> np.ndarray:
+    """Full front end: log-mel → CMVN → deltas. Shape ``(n_frames, output_dim)``."""
+    log_mel = log_mel_spectrogram(samples, config, sample_rate)
+    normalised = normalise_features(log_mel, config)
+    return with_deltas(normalised, config).astype(np.float32)

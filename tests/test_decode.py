@@ -18,3 +18,5 @@ from asr.decode import (
 )
 from asr.features import FeatureExtractor
 from asr.vocab import Vocabulary
+
+SR = 8000
