@@ -97,3 +97,28 @@ def extract_features(
     log_mel = log_mel_spectrogram(samples, config, sample_rate)
     normalised = normalise_features(log_mel, config)
     return with_deltas(normalised, config).astype(np.float32)
+
+
+def expected_frames(num_samples: int, config: FeatureConfig, sample_rate: int) -> int:
+    """Number of frames :func:`extract_features` will produce for a signal."""
+    return frame_count(num_samples, config.frame_length(sample_rate), config.hop_length(sample_rate))
+
+
+def frames_to_samples(num_frames: int, config: FeatureConfig, sample_rate: int) -> int:
+    """Approximate sample count covered by ``num_frames`` frames."""
+    if num_frames <= 0:
+        return 0
+    hop = config.hop_length(sample_rate)
+    return (num_frames - 1) * hop + config.frame_length(sample_rate)
+
+
+def crop_features(
+    features: np.ndarray, start_frame: int, num_frames: Optional[int] = None
+) -> np.ndarray:
+    """Slice a feature matrix by frame index, clamped to its bounds."""
+    if features.ndim != 2:
+        raise FeatureError("features must be 2-D")
+    total = features.shape[0]
+    start = max(0, min(int(start_frame), total))
+    stop = total if num_frames is None else min(total, start + max(0, int(num_frames)))
+    return features[start:stop]

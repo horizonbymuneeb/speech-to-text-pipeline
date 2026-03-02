@@ -20,3 +20,4 @@ from asr.features import FeatureExtractor
 from asr.vocab import Vocabulary
 
 SR = 8000
+FEATURES = FeatureConfig(n_fft=256, n_mels=16, use_deltas=False, cmvn=False)
