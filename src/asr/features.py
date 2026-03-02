@@ -122,3 +122,109 @@ def crop_features(
     start = max(0, min(int(start_frame), total))
     stop = total if num_frames is None else min(total, start + max(0, int(num_frames)))
     return features[start:stop]
+
+
+def frame_energy_profile(features: np.ndarray) -> np.ndarray:
+    """Per-frame loudness proxy from a log-mel matrix (used by the decoder)."""
+    if features.ndim != 2:
+        raise FeatureError("features must be 2-D")
+    if features.shape[0] == 0:
+        return np.zeros(0, dtype=np.float64)
+    return features.mean(axis=1)
+
+
+@dataclass(frozen=True)
+class FeatureStats:
+    """Summary of one extraction, useful in logs and in tests."""
+
+    num_frames: int
+    feature_dim: int
+    num_samples: int
+    sample_rate: int
+
+    @property
+    def duration_s(self) -> float:
+        return self.num_samples / float(self.sample_rate)
+
+    @property
+    def frame_rate_hz(self) -> float:
+        return self.num_frames / self.duration_s if self.duration_s else 0.0
+
+
+class FeatureExtractor:
+    """Reusable extractor: caches the mel filterbank between calls.
+
+    The filterbank depends only on ``(sample_rate, n_fft, n_mels, fmin, fmax)``,
+    so building it once per extractor (not once per chunk) keeps streaming cheap.
+    """
+
+    def __init__(
+        self,
+        config: FeatureConfig,
+        sample_rate: int,
+        stats: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> None:
+        if sample_rate <= 0:
+            raise FeatureError("sample_rate must be positive")
+        self.config = config
+        self.sample_rate = sample_rate
+        self.cmvn_stats = stats
+        self._filterbank = mel_filterbank(
+            sample_rate, config.n_fft, config.n_mels, config.fmin_hz, config.fmax_hz
+        )
+
+    @property
+    def frame_length(self) -> int:
+        return self.config.frame_length(self.sample_rate)
+
+    @property
+    def hop_length(self) -> int:
+        return self.config.hop_length(self.sample_rate)
+
+    @property
+    def output_dim(self) -> int:
+        return self.config.output_dim
+
+    @property
+    def filterbank(self) -> np.ndarray:
+        """The cached ``(n_mels, n_fft//2 + 1)`` filter matrix."""
+        return self._filterbank
+
+    def log_mel(self, samples: np.ndarray) -> np.ndarray:
+        """Log-mel energies without CMVN or deltas."""
+        signal = np.asarray(samples, dtype=np.float64)
+        if signal.ndim != 1:
+            raise FeatureError("samples must be mono (1-D)")
+        if signal.size == 0:
+            raise FeatureError("cannot extract features from an empty signal")
+        emphasised = pre_emphasis(signal, self.config.pre_emphasis)
+        frames = frame_signal(emphasised, self.frame_length, self.hop_length)
+        spectrum = power_spectrum(frames, self.config.n_fft)
+        return log_compress(apply_filterbank(spectrum, self._filterbank), LOG_FLOOR)
+
+    def transform(self, samples: np.ndarray) -> np.ndarray:
+        """Full feature matrix for a waveform."""
+        features = self.log_mel(samples)
+        features = normalise_features(features, self.config, self.cmvn_stats)
+        return with_deltas(features, self.config).astype(np.float32)
+
+    def stats(self, samples: np.ndarray) -> FeatureStats:
+        """Shape information about what :meth:`transform` would return."""
+        count = expected_frames(int(np.asarray(samples).size), self.config, self.sample_rate)
+        return FeatureStats(
+            num_frames=count,
+            feature_dim=self.output_dim,
+            num_samples=int(np.asarray(samples).size),
+            sample_rate=self.sample_rate,
+        )
+
+    def corpus_stats(self, signals) -> tuple[np.ndarray, np.ndarray]:
+        """Log-mel statistics over several waveforms (for global CMVN)."""
+        frames = [self.log_mel(signal) for signal in signals]
+        if not frames:
+            raise FeatureError("need at least one signal to compute statistics")
+        return cmvn_stats(np.concatenate(frames, axis=0))
+
+    def delta(self, features: np.ndarray, width: int = 2) -> np.ndarray:
+        """Expose the delta operator for callers that manage their own stacking."""
+        return delta(features, width)
