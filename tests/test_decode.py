@@ -57,3 +57,20 @@ class TailModel(ConstantModel):
         logits[-1, :, ((self.calls - 1) % 3) + 1] = 8.0
         log_probs = torch.log_softmax(logits, dim=-1)
         return log_probs, torch.tensor([downsampled]), state
+
+
+@pytest.fixture()
+def extractor() -> FeatureExtractor:
+    return FeatureExtractor(FEATURES, SR)
+
+
+@pytest.fixture()
+def vocabulary() -> Vocabulary:
+    return Vocabulary.from_words(("kasa", "timo", "velu"))
+
+
+@pytest.fixture()
+def signal() -> np.ndarray:
+    rng = np.random.default_rng(0)
+    time = np.arange(8000) / SR
+    return (0.5 * np.sin(2 * np.pi * 200 * time) + 0.05 * rng.normal(size=8000)).astype(np.float32)
