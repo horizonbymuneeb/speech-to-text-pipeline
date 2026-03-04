@@ -23,3 +23,6 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 OP_EQUAL = "equal"
+OP_SUB = "sub"
+OP_INS = "ins"
+OP_DEL = "del"
