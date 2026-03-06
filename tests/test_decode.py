@@ -74,3 +74,36 @@ def signal() -> np.ndarray:
     rng = np.random.default_rng(0)
     time = np.arange(8000) / SR
     return (0.5 * np.sin(2 * np.pi * 200 * time) + 0.05 * rng.normal(size=8000)).astype(np.float32)
+
+
+def test_chunk_plan_geometry():
+    plan = plan_chunks(10000, 3200, 960)
+    assert plan.hop_samples == 2240
+    # windows, not boundaries: starts 0, 2240, 4480, 6720, 8960
+    assert plan.num_chunks == 5
+    assert plan.start(0) == 0
+    assert plan.start(1) == 2240
+    assert plan.end(plan.num_chunks - 1) == 10000
+    ranges = plan.ranges()
+    assert ranges[0][0] == 0
+    assert all(end > start for start, end in ranges)
+    assert ranges[-1][1] == 10000
+
+
+def test_chunk_plan_single_chunk_when_short():
+    plan = plan_chunks(1000, 3200, 960)
+    assert plan.num_chunks == 1
+    assert plan.ranges() == [(0, 1000)]
+
+
+def test_chunk_plan_validation():
+    with pytest.raises(DecodeError, match="total_samples"):
+        plan_chunks(0, 3200, 960)
+    with pytest.raises(DecodeError, match="chunk_samples"):
+        plan_chunks(100, 0, 0)
+    with pytest.raises(DecodeError, match="overlap"):
+        plan_chunks(100, 3200, 3200)
+    plan = plan_chunks(10000, 3200, 960)
+    with pytest.raises(DecodeError, match="out of range"):
+        plan.start(99)
+    assert plan.to_dict()["num_chunks"] == 5

@@ -67,3 +67,99 @@ class EditOp:
             OP_DEL: "D",
             OP_INS: "I",
         }[self.kind]
+
+
+@dataclass(frozen=True)
+class Alignment:
+    """An edit script plus its cost."""
+
+    ops: tuple[EditOp, ...]
+    distance: int
+    ref_length: int
+    hyp_length: int
+
+    @property
+    def correct(self) -> int:
+        return sum(1 for op in self.ops if op.kind == OP_EQUAL)
+
+    @property
+    def substitutions(self) -> int:
+        return sum(1 for op in self.ops if op.kind == OP_SUB)
+
+    @property
+    def deletions(self) -> int:
+        return sum(1 for op in self.ops if op.kind == OP_DEL)
+
+    @property
+    def insertions(self) -> int:
+        return sum(1 for op in self.ops if op.kind == OP_INS)
+
+    @property
+    def errors(self) -> int:
+        return self.substitutions + self.deletions + self.insertions
+
+    @property
+    def rate(self) -> float:
+        """Errors per reference token (``inf`` for an empty reference)."""
+        if self.ref_length == 0:
+            return 0.0 if self.errors == 0 else INIFINITY
+        return self.errors / float(self.ref_length)
+
+    def counts(self) -> dict[str, int]:
+        """Counts per op kind, including correct matches."""
+        return {
+            "correct": self.correct,
+            "substitutions": self.substitutions,
+            "deletions": self.deletions,
+            "insertions": self.insertions,
+            "errors": self.errors,
+            "ref_length": self.ref_length,
+            "hyp_length": self.hyp_length,
+        }
+
+    def op_string(self) -> str:
+        """Compact op sequence such as ``= = S I``."""
+        return " ".join(op.symbol() for op in self.ops)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "distance": self.distance,
+            "rate": self.rate,
+            "counts": self.counts(),
+            "ops": [
+                {
+                    "kind": op.kind,
+                    "ref_index": op.ref_index,
+                    "hyp_index": op.hyp_index,
+                    "ref_token": op.ref_token,
+                    "hyp_token": op.hyp_token,
+                }
+                for op in self.ops
+            ],
+        }
+
+
+def _as_tokens(sequence: Sequence[str]) -> list[str]:
+    if isinstance(sequence, str):
+        raise MetricError("pass a sequence of tokens, not a bare string")
+    return [str(token) for token in sequence]
+
+
+def edit_distance(reference: Sequence[str], hypothesis: Sequence[str]) -> int:
+    """Levenshtein distance between two token sequences."""
+    ref = _as_tokens(reference)
+    hyp = _as_tokens(hypothesis)
+    if not ref:
+        return len(hyp)
+    if not hyp:
+        return len(ref)
+    previous = list(range(len(hyp) + 1))
+    for i, ref_token in enumerate(ref, start=1):
+        current = [i]
+        for j, hyp_token in enumerate(hyp, start=1):
+            substitution = previous[j - 1] + (0 if ref_token == hyp_token else 1)
+            deletion = previous[j] + 1
+            insertion = current[j - 1] + 1
+            current.append(min(substitution, deletion, insertion))
+        previous = current
+    return previous[-1]
