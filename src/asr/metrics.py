@@ -232,3 +232,31 @@ def wer_with_alignment(
     """WER together with the alignment that produced it."""
     alignment = align(reference, hypothesis)
     return alignment.rate, alignment
+
+
+def char_error_rate(reference_text: str, hypothesis_text: str) -> float:
+    """CER over characters (spaces included, as they are in the text)."""
+    if not isinstance(reference_text, str) or not isinstance(hypothesis_text, str):
+        raise MetricError("char_error_rate expects two strings")
+    return align(list(reference_text), list(hypothesis_text)).rate
+
+
+def cer_with_alignment(
+    reference_text: str, hypothesis_text: str
+) -> tuple[float, Alignment]:
+    """CER together with the character alignment."""
+    alignment = align(list(reference_text), list(hypothesis_text))
+    return alignment.rate, alignment
+
+
+def corpus_wer(pairs: Iterable[tuple[Sequence[str], Sequence[str]]]) -> float:
+    """Pooled WER across utterances: total errors over total reference words."""
+    total_errors = 0
+    total_ref = 0
+    for reference, hypothesis in pairs:
+        alignment = align(reference, hypothesis)
+        total_errors += alignment.errors
+        total_ref += alignment.ref_length
+    if total_ref == 0:
+        return 0.0 if total_errors == 0 else INIFINITY
+    return total_errors / float(total_ref)

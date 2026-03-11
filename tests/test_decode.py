@@ -133,3 +133,35 @@ def test_streaming_matches_single_pass_for_context_free_model(extractor, vocabul
     assert list(streamed.tokens) == offline == [2]
     assert streamed.chunk_count > 1
     assert streamed.words == ("timo",)
+
+
+def test_streaming_deduplicates_the_overlap(extractor, vocabulary, signal):
+    model = ConstantModel(token=1)
+    decoder = StreamingDecoder(model, extractor, vocabulary, DECODE, FEATURES, SR)
+    result = decoder.decode_samples(signal)
+    # every chunk re-decoded the same single token; without dedup we would see
+    # one token per chunk
+    assert list(result.tokens) == [1]
+    assert sum(result.chunk_overlaps) >= result.chunk_count - 1
+    assert result.transcript() == "kasa"
+
+
+def test_streaming_appends_genuinely_new_tokens(extractor, vocabulary, signal):
+    model = TailModel()
+    decoder = StreamingDecoder(model, extractor, vocabulary, DECODE, FEATURES, SR)
+    result = decoder.decode_samples(signal)
+    assert result.chunk_count >= 2
+    # one tail token per chunk, none of them inside the overlapped region
+    assert len(result.tokens) == result.chunk_count
+    assert result.tokens[0] == 1
+    assert result.num_frames > 0
+
+
+def test_streaming_validation(extractor, vocabulary):
+    decoder = StreamingDecoder(ConstantModel(), extractor, vocabulary, DECODE, FEATURES, SR)
+    with pytest.raises(DecodeError, match="empty signal"):
+        decoder.decode_samples(np.zeros(0, dtype=np.float32))
+    with pytest.raises(DecodeError, match="mono"):
+        decoder.decode_samples(np.zeros((2, 100), dtype=np.float32))
+    with pytest.raises(DecodeError, match="empty chunk"):
+        decoder.decode_chunk(np.zeros(0, dtype=np.float32))
