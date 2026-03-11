@@ -260,3 +260,49 @@ def corpus_wer(pairs: Iterable[tuple[Sequence[str], Sequence[str]]]) -> float:
     if total_ref == 0:
         return 0.0 if total_errors == 0 else INIFINITY
     return total_errors / float(total_ref)
+
+
+def corpus_cer(pairs: Iterable[tuple[str, str]]) -> float:
+    """Pooled CER across utterance pairs."""
+    total_errors = 0
+    total_ref = 0
+    for reference, hypothesis in pairs:
+        alignment = align(list(reference), list(hypothesis))
+        total_errors += alignment.errors
+        total_ref += alignment.ref_length
+    if total_ref == 0:
+        return 0.0 if total_errors == 0 else INIFINITY
+    return total_errors / float(total_ref)
+
+
+def error_counts(alignment: Alignment) -> dict[str, int]:
+    """Per-kind error counts (``S``/``D``/``I`` summed and separately)."""
+    counts = alignment.counts()
+    return {
+        "substitutions": counts["substitutions"],
+        "deletions": counts["deletions"],
+        "insertions": counts["insertions"],
+        "total": counts["errors"],
+    }
+
+
+def format_alignment(
+    reference: Sequence[str],
+    hypothesis: Sequence[str],
+    alignment: Alignment | None = None,
+) -> str:
+    """Three-line rendering: reference, op markers, hypothesis."""
+    script = alignment or align(reference, hypothesis)
+    ref_cells: list[str] = []
+    markers: list[str] = []
+    hyp_cells: list[str] = []
+    for op in script.ops:
+        ref_cells.append(op.ref_token if op.ref_token is not None else "·")
+        markers.append(op.symbol())
+        hyp_cells.append(op.hyp_token if op.hyp_token is not None else "·")
+    width = max([len(cell) for cell in ref_cells + hyp_cells] + [1])
+    ref_line = " ".join(cell.ljust(width) for cell in ref_cells)
+    marker_line = " ".join(marker.center(width) for marker in markers)
+    hyp_line = " ".join(cell.ljust(width) for cell in hyp_cells)
+    header = f"WER {script.rate:.3f}  (S={script.substitutions} D={script.deletions} I={script.insertions})"
+    return "\n".join([header, ref_line, marker_line, hyp_line])

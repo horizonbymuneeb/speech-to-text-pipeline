@@ -165,3 +165,27 @@ def test_streaming_validation(extractor, vocabulary):
         decoder.decode_samples(np.zeros((2, 100), dtype=np.float32))
     with pytest.raises(DecodeError, match="empty chunk"):
         decoder.decode_chunk(np.zeros(0, dtype=np.float32))
+
+
+def test_beam_width_changes_the_decode_path(extractor, vocabulary, signal):
+    config = DecodeConfig(chunk_ms=400.0, overlap_ms=120.0, beam_width=4, blank_index=0)
+    model = ConstantModel(token=3)
+    decoder = StreamingDecoder(model, extractor, vocabulary, config, FEATURES, SR)
+    result = decoder.decode_samples(signal)
+    assert list(result.tokens) == [3]
+
+
+def test_chunk_plan_uses_config_durations(extractor, vocabulary):
+    decoder = StreamingDecoder(ConstantModel(), extractor, vocabulary, DECODE, FEATURES, SR)
+    plan = decoder.chunk_plan(8000)
+    assert plan.chunk_samples == 3200
+    assert plan.overlap_samples == 960
+    assert plan.hop_samples == 2240
+
+
+def test_decode_result_serialisation(extractor, vocabulary, signal):
+    decoder = StreamingDecoder(ConstantModel(), extractor, vocabulary, DECODE, FEATURES, SR)
+    payload = decoder.decode_samples(signal).to_dict()
+    assert payload["words"] == ["kasa"]
+    assert payload["chunk_count"] >= 1
+    assert isinstance(payload["tokens"], list)
