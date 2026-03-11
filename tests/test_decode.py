@@ -107,3 +107,29 @@ def test_chunk_plan_validation():
     with pytest.raises(DecodeError, match="out of range"):
         plan.start(99)
     assert plan.to_dict()["num_chunks"] == 5
+
+
+def test_longest_overlap():
+    assert longest_overlap([1, 2, 3], [2, 3, 4]) == 2
+    assert longest_overlap([1, 2, 3], [4, 5]) == 0
+    assert longest_overlap([1, 2], [1, 2, 3]) == 2
+    assert longest_overlap([], [1]) == 0
+
+
+def test_merge_tokens_drops_the_duplicated_seam():
+    merged, overlap = merge_tokens([1, 2, 3], [3, 4])
+    assert merged == [1, 2, 3, 4]
+    assert overlap == 1
+    merged, overlap = merge_tokens([1, 2], [3, 4])
+    assert merged == [1, 2, 3, 4]
+    assert overlap == 0
+
+
+def test_streaming_matches_single_pass_for_context_free_model(extractor, vocabulary, signal):
+    model = ConstantModel(token=2)
+    decoder = StreamingDecoder(model, extractor, vocabulary, DECODE, FEATURES, SR)
+    streamed = decoder.decode_samples(signal)
+    offline = decode_offline(model, extractor, vocabulary, signal, blank=0)
+    assert list(streamed.tokens) == offline == [2]
+    assert streamed.chunk_count > 1
+    assert streamed.words == ("timo",)

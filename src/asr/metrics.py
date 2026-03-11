@@ -163,3 +163,72 @@ def edit_distance(reference: Sequence[str], hypothesis: Sequence[str]) -> int:
             current.append(min(substitution, deletion, insertion))
         previous = current
     return previous[-1]
+
+
+def align(reference: Sequence[str], hypothesis: Sequence[str]) -> Alignment:
+    """Full edit script between two token sequences.
+
+    Backtrace preference is substitution > deletion > insertion, which keeps the
+    script stable and prefers explaining a difference as a substitution rather
+    than a delete+insert pair.
+    """
+    ref = _as_tokens(reference)
+    hyp = _as_tokens(hypothesis)
+    rows, cols = len(ref), len(hyp)
+    cost = [[0] * (cols + 1) for _ in range(rows + 1)]
+    for i in range(rows + 1):
+        cost[i][0] = i
+    for j in range(cols + 1):
+        cost[0][j] = j
+    for i in range(1, rows + 1):
+        for j in range(1, cols + 1):
+            same = 0 if ref[i - 1] == hyp[j - 1] else 1
+            cost[i][j] = min(
+                cost[i - 1][j - 1] + same,
+                cost[i - 1][j] + 1,
+                cost[i][j - 1] + 1,
+            )
+    ops: list[EditOp] = []
+    i, j = rows, cols
+    while i > 0 or j > 0:
+        if i > 0 and j > 0:
+            same = 0 if ref[i - 1] == hyp[j - 1] else 1
+            if cost[i][j] == cost[i - 1][j - 1] + same:
+                ops.append(
+                    EditOp(
+                        kind=OP_EQUAL if same == 0 else OP_SUB,
+                        ref_index=i - 1,
+                        hyp_index=j - 1,
+                        ref_token=ref[i - 1],
+                        hyp_token=hyp[j - 1],
+                    )
+                )
+                i -= 1
+                j -= 1
+                continue
+        if i > 0 and cost[i][j] == cost[i - 1][j] + 1:
+            ops.append(EditOp(OP_DEL, i - 1, None, ref[i - 1], None))
+            i -= 1
+            continue
+        ops.append(EditOp(OP_INS, None, j - 1, None, hyp[j - 1]))
+        j -= 1
+    ops.reverse()
+    return Alignment(
+        ops=tuple(ops),
+        distance=cost[rows][cols],
+        ref_length=rows,
+        hyp_length=cols,
+    )
+
+
+def word_error_rate(reference: Sequence[str], hypothesis: Sequence[str]) -> float:
+    """WER as ``(S + D + I) / N`` with ``N`` the reference word count."""
+    return align(reference, hypothesis).rate
+
+
+def wer_with_alignment(
+    reference: Sequence[str], hypothesis: Sequence[str]
+) -> tuple[float, Alignment]:
+    """WER together with the alignment that produced it."""
+    alignment = align(reference, hypothesis)
+    return alignment.rate, alignment
