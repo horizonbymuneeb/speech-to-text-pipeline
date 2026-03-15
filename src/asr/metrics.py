@@ -306,3 +306,32 @@ def format_alignment(
     hyp_line = " ".join(cell.ljust(width) for cell in hyp_cells)
     header = f"WER {script.rate:.3f}  (S={script.substitutions} D={script.deletions} I={script.insertions})"
     return "\n".join([header, ref_line, marker_line, hyp_line])
+
+
+def summarize(pairs: Iterable[tuple[Sequence[str], Sequence[str]]]) -> dict[str, float]:
+    """Pooled WER/CER plus error totals for a whole evaluation set."""
+    materialised = [(list(ref), list(hyp)) for ref, hyp in pairs]
+    if not materialised:
+        raise MetricError("cannot summarise an empty evaluation set")
+    totals = {"substitutions": 0, "deletions": 0, "insertions": 0, "errors": 0, "ref_words": 0}
+    for reference, hypothesis in materialised:
+        alignment = align(reference, hypothesis)
+        totals["substitutions"] += alignment.substitutions
+        totals["deletions"] += alignment.deletions
+        totals["insertions"] += alignment.insertions
+        totals["errors"] += alignment.errors
+        totals["ref_words"] += alignment.ref_length
+    wer = corpus_wer(materialised)
+    cer = corpus_cer(
+        [(" ".join(reference), " ".join(hypothesis)) for reference, hypothesis in materialised]
+    )
+    return {
+        "utterances": float(len(materialised)),
+        "wer": wer,
+        "cer": cer,
+        "substitutions": float(totals["substitutions"]),
+        "deletions": float(totals["deletions"]),
+        "insertions": float(totals["insertions"]),
+        "errors": float(totals["errors"]),
+        "ref_words": float(totals["ref_words"]),
+    }
