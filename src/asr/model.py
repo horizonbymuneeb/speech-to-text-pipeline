@@ -23,3 +23,10 @@ from torch import nn
 
 from asr.ctc import CtcError, log_softmax
 from asr.config import ModelConfig
+
+DOWNSAMPLE_FACTOR = 2
+CHECKPOINT_VERSION = 1
+
+
+class ModelError(RuntimeError):
+    """Raised when a model or checkpoint is malformed."""
