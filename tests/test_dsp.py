@@ -48,3 +48,25 @@ def test_frame_count_and_coverage():
     assert frames.shape == (11, 200)
     assert frames[0][0] == 0.0
     assert frames[10][-1] == 999.0  # tail is padded, last sample still covered
+
+
+def test_frame_signal_without_padding():
+    frames = frame_signal(np.arange(1000, dtype=np.float64), 200, 80, pad=False)
+    assert frames.shape == (11, 200)
+
+
+def test_frame_signal_validates_input():
+    with pytest.raises(DspError, match="mono"):
+        frame_signal(np.zeros((2, 10)), 4, 2)
+    with pytest.raises(DspError, match="positive"):
+        frame_signal(np.zeros(10), 0, 2)
+
+
+def test_hann_window_properties():
+    window = hann_window(8)
+    assert window.shape == (8,)
+    assert window[0] == pytest.approx(0.0)
+    assert window.max() == pytest.approx(1.0)
+    assert np.all(window >= 0.0)
+    with pytest.raises(DspError):
+        hann_window(1)
