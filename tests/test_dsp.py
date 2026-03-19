@@ -70,3 +70,25 @@ def test_hann_window_properties():
     assert np.all(window >= 0.0)
     with pytest.raises(DspError):
         hann_window(1)
+
+
+def test_power_spectrum_of_a_pure_tone(tone):
+    sample_rate = 8000
+    frames = frame_signal(tone, 256, 128)
+    power = power_spectrum(frames, 256)
+    assert power.shape == (frames.shape[0], 129)
+    bins = np.fft.rfftfreq(256, d=1.0 / sample_rate)
+    peak = bins[int(np.argmax(power.mean(axis=0)))]
+    assert peak == pytest.approx(440.0, abs=bins[1] - bins[0])
+
+
+def test_power_spectrum_requires_big_enough_fft():
+    with pytest.raises(DspError, match="n_fft"):
+        power_spectrum(np.zeros((2, 300)), 256)
+
+
+def test_mel_scale_roundtrip():
+    frequencies = np.array([0.0, 100.0, 1000.0, 4000.0])
+    assert np.allclose(mel_to_hz(hz_to_mel(frequencies)), frequencies)
+    assert hz_to_mel(0.0) == pytest.approx(0.0)
+    assert hz_to_mel(700.0) == pytest.approx(2595.0 * np.log10(2.0))

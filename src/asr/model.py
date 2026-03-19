@@ -243,3 +243,25 @@ def build_model(
         dropout=config.dropout,
     )
     return model.init_weights(config.seed if seed is None else seed)
+
+
+def count_parameters(model: nn.Module) -> int:
+    """Trainable parameter count of any module."""
+    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+
+
+def downsample_lengths(lengths: torch.Tensor) -> torch.Tensor:
+    """Frame counts after the model's stride-2 convolution."""
+    return torch.div(lengths + DOWNSAMPLE_FACTOR - 1, DOWNSAMPLE_FACTOR, rounding_mode="floor")
+
+
+def model_summary(model: TinyCtcModel) -> dict[str, Any]:
+    """Human readable description used by the training script's output."""
+    return {
+        "input_dim": model.input_dim,
+        "vocab_size": model.vocab_size,
+        "channels": model.signature.channels,
+        "hidden": model.signature.hidden,
+        "parameters": model.num_parameters(),
+        "downsample_factor": model.downsample_factor,
+    }
