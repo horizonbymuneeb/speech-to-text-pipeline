@@ -265,3 +265,38 @@ def model_summary(model: TinyCtcModel) -> dict[str, Any]:
         "parameters": model.num_parameters(),
         "downsample_factor": model.downsample_factor,
     }
+
+
+def load_or_build(
+    path: str | Path,
+    config: ModelConfig,
+    input_dim: int,
+    vocab_size: int,
+) -> tuple[TinyCtcModel, dict[str, Any], bool]:
+    """Load a checkpoint when it matches the requested shape, else build fresh.
+
+    Returns ``(model, metadata, loaded)``. A checkpoint trained against a
+    different vocabulary or feature size is rejected rather than silently
+    producing garbage logits.
+    """
+    source = Path(path)
+    if not source.is_file():
+        return build_model(config, input_dim, vocab_size), {}, False
+    model, metadata = TinyCtcModel.load(source)
+    if model.input_dim != input_dim or model.vocab_size != vocab_size:
+        raise ModelError(
+            "checkpoint shape does not match the current features/vocabulary "
+            f"(checkpoint {model.input_dim}x{model.vocab_size}, "
+            f"wanted {input_dim}x{vocab_size})"
+        )
+    return model, metadata, True
+
+
+def validate_batch(features: torch.Tensor, targets: torch.Tensor) -> None:
+    """Shared shape checks for the training loop."""
+    if features.ndim != 3:
+        raise CtcError("features must be (batch, time, dim)")
+    if targets.ndim != 2:
+        raise CtcError("targets must be (batch, target_length)")
+    if features.shape[0] != targets.shape[0]:
+        raise CtcError("features and targets disagree on batch size")

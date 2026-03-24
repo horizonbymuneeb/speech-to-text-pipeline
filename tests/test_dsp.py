@@ -92,3 +92,25 @@ def test_mel_scale_roundtrip():
     assert np.allclose(mel_to_hz(hz_to_mel(frequencies)), frequencies)
     assert hz_to_mel(0.0) == pytest.approx(0.0)
     assert hz_to_mel(700.0) == pytest.approx(2595.0 * np.log10(2.0))
+
+
+def test_mel_filterbank_shape_and_area():
+    filters = mel_filterbank(8000, 256, 20, 60.0, 3800.0)
+    assert filters.shape == (20, 129)
+    assert np.all(filters >= 0.0)
+    # every filter is area-normalised over the discrete bins
+    assert np.allclose(filters.sum(axis=1), 1.0, atol=1e-9)
+
+
+def test_mel_filterbank_centres_ascend():
+    filters = mel_filterbank(8000, 256, 10, 60.0, 3800.0)
+    centres = np.argmax(filters, axis=1)
+    assert np.all(np.diff(centres) >= 0)
+    assert len(set(centres.tolist())) > 5
+
+
+def test_mel_filterbank_validation():
+    with pytest.raises(DspError, match="fmin_hz"):
+        mel_filterbank(8000, 256, 10, 100.0, 50.0)
+    with pytest.raises(DspError, match="n_mels"):
+        mel_filterbank(8000, 256, 0)
