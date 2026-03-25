@@ -114,3 +114,23 @@ def test_mel_filterbank_validation():
         mel_filterbank(8000, 256, 10, 100.0, 50.0)
     with pytest.raises(DspError, match="n_mels"):
         mel_filterbank(8000, 256, 0)
+
+
+def test_apply_filterbank_checks_bins():
+    filters = mel_filterbank(8000, 256, 8, 60.0, 3800.0)
+    with pytest.raises(DspError, match="bins"):
+        apply_filterbank(np.zeros((3, 64)), filters)
+
+
+def test_log_compress_floors_at_zero_energy():
+    values = np.array([[0.0, np.e, 1.0]])
+    compressed = log_compress(values)
+    assert compressed[0][0] == pytest.approx(np.log(1e-10))
+    assert compressed[0][1] == pytest.approx(1.0)
+
+
+def test_cmvn_normalises_each_dimension():
+    features = np.array([[1.0, 10.0], [3.0, 30.0]])
+    normalised = cmvn(features)
+    assert np.allclose(normalised.mean(axis=0), 0.0)
+    assert np.allclose(normalised.std(axis=0), 1.0)
