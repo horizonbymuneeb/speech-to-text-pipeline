@@ -66,3 +66,58 @@ class UtteranceEvaluation:
             "chunks": self.chunk_count,
             "duration_s": self.duration_s,
         }
+
+
+@dataclass(frozen=True)
+class EvaluationReport:
+    """Corpus-level numbers plus the per-utterance detail."""
+
+    evaluations: tuple[UtteranceEvaluation, ...]
+    wer: float
+    cer: float
+    ref_words: int
+    errors: int
+    model_summary: dict[str, Any]
+    history: tuple[float, ...]
+    baseline_wer: float | None = None
+    seconds: float = 0.0
+
+    @property
+    def utterances(self) -> int:
+        return len(self.evaluations)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "utterances": self.utterances,
+            "wer": self.wer,
+            "cer": self.cer,
+            "ref_words": self.ref_words,
+            "errors": self.errors,
+            "baseline_wer": self.baseline_wer,
+            "model": self.model_summary,
+            "history": list(self.history),
+            "seconds": round(self.seconds, 3),
+            "utterances_detail": [evaluation.to_dict() for evaluation in self.evaluations],
+        }
+
+    def summary_line(self) -> str:
+        """One-line headline used by the CLI and the README."""
+        baseline = (
+            f"  (untrained baseline WER {self.baseline_wer:.3f})"
+            if self.baseline_wer is not None
+            else ""
+        )
+        return (
+            f"{self.utterances} utterances  WER {self.wer:.3f}  CER {self.cer:.3f}"
+            f"  errors {self.errors}/{self.ref_words}{baseline}"
+        )
+
+
+def build_vocabulary(config: PipelineConfig) -> Vocabulary:
+    """Vocabulary implied by the synthetic corpus config."""
+    return Vocabulary.from_words(config.synth.vocabulary)
+
+
+def build_extractor(config: PipelineConfig) -> FeatureExtractor:
+    """Feature extractor for the configured sample rate."""
+    return FeatureExtractor(config.features, config.sample_rate)

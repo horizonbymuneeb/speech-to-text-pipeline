@@ -134,3 +134,23 @@ def test_cmvn_normalises_each_dimension():
     normalised = cmvn(features)
     assert np.allclose(normalised.mean(axis=0), 0.0)
     assert np.allclose(normalised.std(axis=0), 1.0)
+
+
+def test_cmvn_stats_and_apply_cmvn_match():
+    features = np.random.default_rng(0).normal(5.0, 2.0, (50, 4))
+    mean, std = cmvn_stats(features)
+    assert mean.shape == (4,)
+    assert np.all(std > 0)
+    assert np.allclose(apply_cmvn(features, mean, std).mean(axis=0), 0.0)
+    assert np.allclose(cmvn(features), apply_cmvn(features, mean, std))
+
+
+def test_apply_cmvn_rejects_wrong_dimension():
+    with pytest.raises(DspError, match="statistics"):
+        apply_cmvn(np.zeros((3, 4)), np.zeros(3), np.ones(3))
+
+
+def test_delta_of_a_linear_ramp_is_constant():
+    features = np.arange(10, dtype=np.float64).reshape(-1, 1)
+    derivatives = delta(features, width=2)
+    assert np.allclose(derivatives[2:-2], 1.0)
