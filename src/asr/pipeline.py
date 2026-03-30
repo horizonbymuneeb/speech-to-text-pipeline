@@ -121,3 +121,185 @@ def build_vocabulary(config: PipelineConfig) -> Vocabulary:
 def build_extractor(config: PipelineConfig) -> FeatureExtractor:
     """Feature extractor for the configured sample rate."""
     return FeatureExtractor(config.features, config.sample_rate)
+
+
+def build_detector(config: PipelineConfig) -> VoiceActivityDetector:
+    """Voice activity detector for the configured sample rate."""
+    return VoiceActivityDetector(config.vad, config.sample_rate)
+
+
+class SpeechPipeline:
+    """A trained model plus the front end, decoder and scorer around it."""
+
+    def __init__(
+        self,
+        config: PipelineConfig,
+        model: TinyCtcModel,
+        vocabulary: Vocabulary,
+        history: Sequence[float] = (),
+        cmvn: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> None:
+        self.config = config
+        self.model = model
+        self.vocabulary = vocabulary
+        self.history = tuple(float(value) for value in history)
+        self.cmvn = cmvn
+        self.extractor = FeatureExtractor(config.features, config.sample_rate, stats=cmvn)
+        self.detector = build_detector(config)
+        self.decoder = StreamingDecoder(
+            model=model,
+            extractor=self.extractor,
+            vocabulary=vocabulary,
+            decode_config=config.decode,
+            feature_config=config.features,
+            sample_rate=config.sample_rate,
+        )
+
+    @classmethod
+    def create(
+        cls,
+        config: PipelineConfig,
+        *,
+        force_train: bool = False,
+        verbose: bool = False,
+    ) -> "SpeechPipeline":
+        """Load a checkpoint, or train one when it is missing or ``force_train``."""
+        checkpoint = config.checkpoint_path()
+        if checkpoint.is_file() and not force_train:
+            result = load_training_result(config)
+            if result.vocabulary.words != tuple(config.synth.vocabulary):
+                raise PipelineError(
+                    "checkpoint vocabulary does not match config.synth.vocabulary; "
+                    "retrain with force_train=True"
+                )
+            return cls(config, result.model, result.vocabulary, result.history, result.cmvn)
+        trained = train_model(config, verbose=verbose)
+        save_training_result(trained, config)
+        return cls(config, trained.model, trained.vocabulary, trained.history, trained.cmvn)
+
+    def prepare_audio(self, samples: np.ndarray) -> tuple[np.ndarray, list[SpeechSegment]]:
+        """Trim leading/trailing silence with the detector.
+
+        Only the outer silence is removed: the gaps *between* words are kept,
+        because CTC needs a blank region to separate two identical words
+        ("timo timo"). Concatenating every detected segment would glue those
+        words together and cost real accuracy.
+        """
+        signal = np.asarray(samples)
+        segments = self.detector.detect(signal)
+        if not segments:
+            return signal, segments
+        start = segments[0].start_sample
+        end = segments[-1].end_sample
+        trimmed = signal[start:end]
+        if trimmed.size == 0:
+            return signal, segments
+        return trimmed, segments
+
+    def transcribe(self, samples: np.ndarray) -> DecodeResult:
+        """Decode a waveform (VAD-trimmed) in overlapping chunks."""
+        audio, _ = self.prepare_audio(samples)
+        return self.decoder.decode_samples(audio)
+
+    def transcribe_offline(self, samples: np.ndarray) -> list[int]:
+        """Decode a waveform in one pass — used to show what chunking costs."""
+        audio, _ = self.prepare_audio(samples)
+        return decode_offline(
+            self.model, self.extractor, self.vocabulary, audio, blank=self.config.decode.blank_index
+        )
+
+    def evaluate(
+        self,
+        count: int | None = None,
+        seed: int | None = None,
+        *,
+        include_baseline: bool = False,
+    ) -> EvaluationReport:
+        """Decode a freshly generated corpus and score it against ground truth."""
+        started = time.perf_counter()
+        utterances = count if count is not None else self.config.train.eval_utterances
+        signals = make_corpus(
+            self.config.audio,
+            self.config.synth,
+            utterances,
+            seed=self.config.synth.seed + 500 if seed is None else seed,
+        )
+        evaluations: list[UtteranceEvaluation] = []
+        for index, signal in enumerate(signals):
+            audio, segments = self.prepare_audio(signal.samples)
+            decoded = self.decoder.decode_samples(audio)
+            alignment = align(list(signal.words), list(decoded.words))
+            evaluations.append(
+                UtteranceEvaluation(
+                    index=index,
+                    reference=signal.words,
+                    hypothesis=decoded.words,
+                    alignment=alignment,
+                    segments=len(segments),
+                    speech_ratio=float(
+                        sum(segment.num_samples for segment in segments) / signal.num_samples
+                    )
+                    if signal.num_samples
+                    else 0.0,
+                    chunk_count=decoded.chunk_count,
+                    duration_s=signal.duration_s,
+                )
+            )
+        pairs = [
+            (list(evaluation.reference), list(evaluation.hypothesis))
+            for evaluation in evaluations
+        ]
+        pooled = summarize(pairs)
+        baseline_wer = None
+        if include_baseline:
+            baseline_wer = self._baseline_wer(signals)
+        return EvaluationReport(
+            evaluations=tuple(evaluations),
+            wer=pooled["wer"],
+            cer=pooled["cer"],
+            ref_words=int(pooled["ref_words"]),
+            errors=int(pooled["errors"]),
+            model_summary=model_summary(self.model),
+            history=self.history,
+            baseline_wer=baseline_wer,
+            seconds=time.perf_counter() - started,
+        )
+
+    def _baseline_wer(self, signals: Sequence[Signal]) -> float:
+        """WER of an untrained model with the same shape — the honest floor."""
+        baseline = build_model(
+            self.config.model,
+            self.config.features.output_dim,
+            self.vocabulary.size,
+            seed=self.config.model.seed,
+        )
+        decoder = StreamingDecoder(
+            model=baseline,
+            extractor=self.extractor,
+            vocabulary=self.vocabulary,
+            decode_config=self.config.decode,
+            feature_config=self.config.features,
+            sample_rate=self.config.sample_rate,
+        )
+        pairs = []
+        for signal in signals:
+            audio, _ = self.prepare_audio(signal.samples)
+            decoded = decoder.decode_samples(audio)
+            pairs.append((list(signal.words), list(decoded.words)))
+        return summarize(pairs)["wer"]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """CLI parser (separate so the tests can inspect it)."""
+    parser = argparse.ArgumentParser(
+        prog="asr-pipeline",
+        description="Streaming CPU ASR over a synthetic speech corpus",
+    )
+    parser.add_argument("--config", default="config.yaml", help="path to config.yaml")
+    parser.add_argument("--train", action="store_true", help="retrain even if a checkpoint exists")
+    parser.add_argument("--epochs", type=int, default=None, help="override train.epochs")
+    parser.add_argument("--limit", type=int, default=None, help="number of utterances to evaluate")
+    parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument("--quiet", action="store_true", help="only print the summary line")
+    parser.add_argument("--offline", action="store_true", help="also score one-shot decoding")
+    return parser

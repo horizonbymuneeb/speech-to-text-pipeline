@@ -154,3 +154,21 @@ def test_delta_of_a_linear_ramp_is_constant():
     features = np.arange(10, dtype=np.float64).reshape(-1, 1)
     derivatives = delta(features, width=2)
     assert np.allclose(derivatives[2:-2], 1.0)
+
+
+def test_delta_edge_replication_and_validation():
+    features = np.zeros((5, 2))
+    assert delta(features).shape == (5, 2)
+    with pytest.raises(DspError, match="width"):
+        delta(features, 0)
+
+
+def test_stack_deltas_triples_the_dimension():
+    stacked = stack_deltas(np.zeros((7, 3)))
+    assert stacked.shape == (7, 9)
+
+
+def test_frame_times_and_duration():
+    times = frame_times(3, 80, 8000)
+    assert np.allclose(times, [0.0, 0.01, 0.02])
+    assert signal_duration(np.zeros(4000), 8000) == pytest.approx(0.5)
