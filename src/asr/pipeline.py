@@ -303,3 +303,44 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quiet", action="store_true", help="only print the summary line")
     parser.add_argument("--offline", action="store_true", help="also score one-shot decoding")
     return parser
+
+
+def run_pipeline(args: argparse.Namespace) -> EvaluationReport:
+    """Load or train, then evaluate — the whole CLI body in one function."""
+    overrides: dict[str, Any] = {}
+    if args.epochs is not None:
+        overrides["train"] = {"epochs": int(args.epochs)}
+    config = load_config(args.config, overrides=overrides or None)
+    pipeline = SpeechPipeline.create(config, force_train=args.train, verbose=not args.quiet)
+    return pipeline.evaluate(count=args.limit, include_baseline=True)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point; returns a process exit code."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        report = run_pipeline(args)
+    except (ConfigError, PipelineError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return 0
+    if not args.quiet:
+        print("model:", json.dumps(report.model_summary, sort_keys=True))
+        if report.history:
+            print(f"training loss: {report.history[0]:.4f} -> {report.history[-1]:.4f}")
+        for evaluation in report.evaluations:
+            reference = " ".join(evaluation.reference)
+            hypothesis = " ".join(evaluation.hypothesis) or "<empty>"
+            print(
+                f"  [{evaluation.index}] wer {evaluation.wer:.2f}  "
+                f"chunks {evaluation.chunk_count}  ref: {reference}  hyp: {hypothesis}"
+            )
+    print(report.summary_line())
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
