@@ -21,3 +21,5 @@ from asr.features import (
     with_deltas,
 )
 from asr.synth import AudioConfig, SynthConfig, make_corpus
+
+SR = 8000

@@ -47,3 +47,7 @@ CONSONANTS: dict[str, tuple[float, float, float]] = {
     "l": (620.0, 350.0, 0.045),
     "r": (950.0, 450.0, 0.045),
 }
+
+FORMANT_GAINS = (1.0, 0.55, 0.28)
+FORMANT_BANDWIDTHS = (90.0, 120.0, 180.0)
+VOWEL_SECONDS = 0.150
