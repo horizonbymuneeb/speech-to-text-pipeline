@@ -23,3 +23,14 @@ from asr.features import (
 from asr.synth import AudioConfig, SynthConfig, make_corpus
 
 SR = 8000
+CONFIG = FeatureConfig(
+    frame_ms=25.0,
+    hop_ms=10.0,
+    n_fft=256,
+    n_mels=32,
+    fmin_hz=60.0,
+    fmax_hz=3800.0,
+    pre_emphasis=0.97,
+    use_deltas=True,
+    cmvn=True,
+)
