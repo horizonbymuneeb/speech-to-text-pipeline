@@ -54,3 +54,62 @@ VOWEL_SECONDS = 0.150
 FADE_SECONDS = 0.005
 LEAD_IN_SECONDS = 0.100
 TAIL_SECONDS = 0.120
+
+
+class SynthesisError(ValueError):
+    """Raised when a word cannot be syllabified or a phoneme is unknown."""
+
+
+@dataclass(frozen=True)
+class Syllable:
+    """A consonant onset (possibly empty) plus a vowel nucleus."""
+
+    onset: str
+    vowel: str
+
+    def __post_init__(self) -> None:
+        if self.vowel not in VOWEL_FORMANTS:
+            raise SynthesisError(f"unknown vowel {self.vowel!r}")
+        if self.onset and self.onset not in CONSONANTS:
+            raise SynthesisError(f"unknown consonant {self.onset!r}")
+
+
+@dataclass(frozen=True)
+class Signal:
+    """A waveform with its ground-truth words and sample spans."""
+
+    samples: np.ndarray
+    sample_rate: int
+    words: tuple[str, ...]
+    word_spans: tuple[tuple[int, int], ...]
+
+    def __post_init__(self) -> None:
+        if self.samples.ndim != 1:
+            raise SynthesisError("samples must be mono (1-D)")
+        if len(self.word_spans) != len(self.words):
+            raise SynthesisError("word_spans must have one entry per word")
+        if self.sample_rate <= 0:
+            raise SynthesisError("sample_rate must be positive")
+
+    @property
+    def num_samples(self) -> int:
+        return int(self.samples.shape[0])
+
+    @property
+    def duration_s(self) -> float:
+        return self.num_samples / float(self.sample_rate)
+
+    def tokens(self, vocabulary: Vocabulary) -> list[int]:
+        """Ground-truth token ids for this utterance."""
+        return vocabulary.encode(self.words)
+
+    def word_at_sample(self, sample: int) -> str | None:
+        """Word whose span contains ``sample`` (``None`` in a gap)."""
+        for word, (start, end) in zip(self.words, self.word_spans):
+            if start <= sample < end:
+                return word
+        return None
+
+    def transcript(self) -> str:
+        """Space-joined ground truth."""
+        return " ".join(self.words)
