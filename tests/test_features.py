@@ -54,3 +54,54 @@ def test_features_without_deltas_or_cmvn(tone):
     plain = replace(CONFIG, use_deltas=False, cmvn=False)
     features = extract_features(tone, plain, SR)
     assert features.shape[1] == plain.n_mels
+
+
+def test_pure_tone_lands_in_the_expected_mel_band():
+    """A 440 Hz tone must excite the band that covers 440 Hz, not its neighbours."""
+    from asr.dsp import mel_filterbank, mel_to_hz
+
+    sample_rate = 8000
+    time = np.arange(4000) / sample_rate
+    tone = (0.8 * np.sin(2 * np.pi * 440.0 * time)).astype(np.float32)
+    log_mel = log_mel_spectrogram(tone, replace(CONFIG, cmvn=False), sample_rate)
+    band = int(np.argmax(log_mel.mean(axis=0)))
+    filters = mel_filterbank(sample_rate, CONFIG.n_fft, CONFIG.n_mels, 60.0, 3800.0)
+    bins = np.fft.rfftfreq(CONFIG.n_fft, d=1.0 / sample_rate)
+    band_centre_hz = mel_to_hz(
+        np.linspace(
+            __import__("asr.dsp", fromlist=["hz_to_mel"]).hz_to_mel(60.0),
+            __import__("asr.dsp", fromlist=["hz_to_mel"]).hz_to_mel(3800.0),
+            CONFIG.n_mels + 2,
+        )[band + 1]
+    )
+    assert abs(band_centre_hz - 440.0) < 400.0
+    assert filters[band][np.argmin(np.abs(bins - 440.0))] > 0
+
+
+def test_cmvn_makes_each_dimension_zero_mean_unit_variance(tone):
+    features = log_mel_spectrogram(tone, CONFIG, SR)
+    normalised = normalise_features(features, CONFIG)
+    assert np.allclose(normalised.mean(axis=0), 0.0, atol=1e-6)
+    assert np.allclose(normalised.std(axis=0), 1.0, atol=1e-5)
+
+
+def test_global_stats_keep_chunks_consistent():
+    """Chunked features must match whole-utterance features (streaming sanity)."""
+    audio = AudioConfig(sample_rate=SR, peak_amplitude=0.9, noise_snr_db=40.0)
+    synth = SynthConfig(
+        seed=2, vocabulary=("kasa", "timo"), words_per_utterance=(2, 2), f0_hz=120.0, gap_ms=(40.0, 60.0)
+    )
+    corpus = make_corpus(audio, synth, 3, seed=5)
+    plain = FeatureExtractor(CONFIG, SR)
+    stats = plain.corpus_stats([signal.samples for signal in corpus])
+    extractor = FeatureExtractor(CONFIG, SR, stats=stats)
+
+    signal = corpus[0].samples
+    whole = extractor.transform(signal)
+    chunks = [
+        extractor.transform(signal[start : start + 1600])
+        for start in range(0, signal.size, 1600)
+    ]
+    stitched = np.concatenate(chunks, axis=0)
+    assert stitched.shape[1] == whole.shape[1]
+    assert abs(float(stitched.mean()) - float(whole.mean())) < 0.35

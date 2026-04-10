@@ -113,3 +113,59 @@ class Signal:
     def transcript(self) -> str:
         """Space-joined ground truth."""
         return " ".join(self.words)
+
+
+def syllabify(word: str) -> list[Syllable]:
+    """Split a lowercase word into (onset, vowel) syllables.
+
+    Every vowel ends a syllable; the consonants collected since the previous
+    vowel become the next syllable's onset.
+    """
+    if not word or not word.isalpha() or word != word.lower():
+        raise SynthesisError(f"word {word!r} must be lowercase letters")
+    syllables: list[Syllable] = []
+    pending = ""
+    for char in word:
+        if char in VOWEL_FORMANTS:
+            syllables.append(Syllable(onset=pending, vowel=char))
+            pending = ""
+        elif char in CONSONANTS:
+            if len(pending) > 1:
+                raise SynthesisError(
+                    f"word {word!r} has a consonant cluster {pending!r} that this "
+                    "synthesiser does not model"
+                )
+            pending += char
+        else:
+            raise SynthesisError(f"word {word!r} contains unsupported character {char!r}")
+    if not syllables:
+        raise SynthesisError(f"word {word!r} has no vowel")
+    if pending:
+        raise SynthesisError(f"word {word!r} ends with a consonant cluster {pending!r}")
+    return syllables
+
+
+def formant_envelope(
+    frequencies: np.ndarray, formants: Sequence[float]
+) -> np.ndarray:
+    """Amplitude envelope from Gaussian resonances at the formant frequencies."""
+    envelope = np.full_like(frequencies, 0.02, dtype=np.float64)
+    for gain, centre, bandwidth in zip(FORMANT_GAINS, formants, FORMANT_BANDWIDTHS):
+        envelope += gain * np.exp(-0.5 * ((frequencies - centre) / bandwidth) ** 2)
+    return envelope
+
+
+def raised_cosine_envelope(
+    length: int, attack: int, release: int
+) -> np.ndarray:
+    """Attack/release envelope; ``attack + release`` must fit inside ``length``."""
+    if length <= 0:
+        return np.zeros(0, dtype=np.float64)
+    attack = max(0, min(attack, length))
+    release = max(0, min(release, length - attack))
+    envelope = np.ones(length, dtype=np.float64)
+    if attack:
+        envelope[:attack] = 0.5 - 0.5 * np.cos(np.linspace(0.0, np.pi, attack))
+    if release:
+        envelope[length - release :] = 0.5 + 0.5 * np.cos(np.linspace(0.0, np.pi, release))
+    return envelope
