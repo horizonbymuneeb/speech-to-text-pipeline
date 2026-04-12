@@ -169,3 +169,90 @@ def raised_cosine_envelope(
     if release:
         envelope[length - release :] = 0.5 + 0.5 * np.cos(np.linspace(0.0, np.pi, release))
     return envelope
+
+
+def synthesize_vowel(
+    vowel: str,
+    sample_rate: int,
+    f0_hz: float,
+    duration_s: float = VOWEL_SECONDS,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """Additive-synthesis a vowel: harmonic series shaped by formant resonances."""
+    if vowel not in VOWEL_FORMANTS:
+        raise SynthesisError(f"unknown vowel {vowel!r}")
+    generator = rng or np.random.default_rng(0)
+    length = int(round(duration_s * sample_rate))
+    if length < 16:
+        raise SynthesisError("vowel duration is too short")
+    time = np.arange(length, dtype=np.float64) / sample_rate
+    nyquist = sample_rate / 2.0
+    formants = VOWEL_FORMANTS[vowel]
+    signal = np.zeros(length, dtype=np.float64)
+    harmonic = 1
+    while harmonic * f0_hz < nyquist:
+        frequency = harmonic * f0_hz
+        amplitude = float(formant_envelope(np.array([frequency]), formants)[0]) / harmonic**0.5
+        phase = float(generator.uniform(0.0, 2.0 * np.pi))
+        signal += amplitude * np.sin(2.0 * np.pi * frequency * time + phase)
+        harmonic += 1
+    attack = int(0.015 * sample_rate)
+    release = int(0.040 * sample_rate)
+    signal *= raised_cosine_envelope(length, attack, release)
+    peak = float(np.max(np.abs(signal))) or 1.0
+    return (signal / peak).astype(np.float32)
+
+
+def synthesize_consonant(
+    consonant: str,
+    sample_rate: int,
+    rng: np.random.Generator,
+    duration_s: float | None = None,
+) -> np.ndarray:
+    """Band-limited noise burst for a consonant onset."""
+    if consonant not in CONSONANTS:
+        raise SynthesisError(f"unknown consonant {consonant!r}")
+    centre, bandwidth, default_duration = CONSONANTS[consonant]
+    seconds = default_duration if duration_s is None else duration_s
+    length = max(8, int(round(seconds * sample_rate)))
+    noise = rng.normal(0.0, 1.0, length)
+    spectrum = np.fft.rfft(noise)
+    freqs = np.fft.rfftfreq(length, d=1.0 / sample_rate)
+    spectrum *= np.exp(-0.5 * ((freqs - centre) / bandwidth) ** 2)
+    shaped = np.fft.irfft(spectrum, n=length)
+    shaped *= raised_cosine_envelope(length, int(0.004 * sample_rate), length // 2)
+    peak = float(np.max(np.abs(shaped))) or 1.0
+    return (0.35 * shaped / peak).astype(np.float32)
+
+
+def crossfade_concat(parts: Sequence[np.ndarray], sample_rate: int) -> np.ndarray:
+    """Concatenate parts with a short equal-power crossfade at each join."""
+    if not parts:
+        return np.zeros(0, dtype=np.float32)
+    fade = max(1, int(FADE_SECONDS * sample_rate))
+    result = parts[0].astype(np.float64)
+    for part in parts[1:]:
+        chunk = part.astype(np.float64)
+        overlap = min(fade, len(result), len(chunk))
+        if overlap <= 0:
+            result = np.concatenate([result, chunk])
+            continue
+        ramp = np.linspace(0.0, 1.0, overlap)
+        blended = result[-overlap:] * (1.0 - ramp) + chunk[:overlap] * ramp
+        result = np.concatenate([result[:-overlap], blended, chunk[overlap:]])
+    return result.astype(np.float32)
+
+
+def synthesize_word(
+    word: str,
+    sample_rate: int,
+    f0_hz: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Synthesise one word: consonant burst + vowel, per syllable."""
+    parts: list[np.ndarray] = []
+    for syllable in syllabify(word):
+        if syllable.onset:
+            parts.append(synthesize_consonant(syllable.onset, sample_rate, rng))
+        parts.append(synthesize_vowel(syllable.vowel, sample_rate, f0_hz, rng=rng))
+    return crossfade_concat(parts, sample_rate)

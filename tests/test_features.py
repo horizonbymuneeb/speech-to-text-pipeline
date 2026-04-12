@@ -105,3 +105,26 @@ def test_global_stats_keep_chunks_consistent():
     stitched = np.concatenate(chunks, axis=0)
     assert stitched.shape[1] == whole.shape[1]
     assert abs(float(stitched.mean()) - float(whole.mean())) < 0.35
+
+
+def test_corpus_stats_shape_and_validation():
+    extractor = FeatureExtractor(CONFIG, SR)
+    with pytest.raises(FeatureError, match="at least one signal"):
+        extractor.corpus_stats([])
+
+
+def test_empty_signal_rejected():
+    extractor = FeatureExtractor(CONFIG, SR)
+    with pytest.raises(FeatureError, match="empty"):
+        extractor.transform(np.zeros(0, dtype=np.float32))
+    with pytest.raises(FeatureError, match="mono"):
+        extractor.transform(np.zeros((2, 100), dtype=np.float32))
+
+
+def test_extractor_geometry_and_cache():
+    extractor = FeatureExtractor(CONFIG, SR)
+    assert extractor.frame_length == 200
+    assert extractor.hop_length == 80
+    assert extractor.output_dim == 96
+    assert extractor.filterbank.shape == (CONFIG.n_mels, CONFIG.n_fft // 2 + 1)
+    assert extractor.filterbank is extractor.filterbank
