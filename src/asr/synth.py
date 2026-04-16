@@ -278,3 +278,62 @@ def normalize_peak(samples: np.ndarray, peak: float = 0.9) -> np.ndarray:
     if current == 0.0:
         return samples.astype(np.float32)
     return (samples.astype(np.float64) * (peak / current)).astype(np.float32)
+
+
+def add_noise(
+    samples: np.ndarray, snr_db: float, rng: np.random.Generator
+) -> np.ndarray:
+    """Add white Gaussian noise at the requested SNR."""
+    if samples.size == 0:
+        return samples.astype(np.float32)
+    signal_power = float(np.mean(np.square(samples, dtype=np.float64)))
+    if signal_power <= 0.0:
+        return samples.astype(np.float32)
+    noise_power = signal_power / (10.0 ** (snr_db / 10.0))
+    noise = rng.normal(0.0, np.sqrt(noise_power), samples.shape[0])
+    return (samples.astype(np.float64) + noise).astype(np.float32)
+
+
+def synthesize_utterance(
+    words: Sequence[str],
+    audio: AudioConfig,
+    synth: SynthConfig,
+    rng: np.random.Generator,
+) -> Signal:
+    """Build one utterance from ``words`` with gaps, lead-in and noise."""
+    if not words:
+        raise SynthesisError("an utterance needs at least one word")
+    sample_rate = audio.sample_rate
+    gap_low, gap_high = synth.gap_ms
+    pieces: list[np.ndarray] = [silence(LEAD_IN_SECONDS, sample_rate)]
+    spans: list[tuple[int, int]] = []
+    cursor = len(pieces[0])
+    for index, word in enumerate(words):
+        if index:
+            gap = silence(float(rng.uniform(gap_low, gap_high)) / 1000.0, sample_rate)
+            pieces.append(gap)
+            cursor += len(gap)
+        word_samples = synthesize_word(word, sample_rate, synth.f0_hz, rng)
+        pieces.append(word_samples)
+        spans.append((cursor, cursor + len(word_samples)))
+        cursor += len(word_samples)
+    tail = silence(TAIL_SECONDS, sample_rate)
+    pieces.append(tail)
+    samples = normalize_peak(np.concatenate(pieces), audio.peak_amplitude)
+    samples = add_noise(samples, audio.noise_snr_db, rng)
+    return Signal(
+        samples=samples,
+        sample_rate=sample_rate,
+        words=tuple(words),
+        word_spans=tuple(spans),
+    )
+
+
+def sample_words(
+    synth: SynthConfig, rng: np.random.Generator, vocabulary: Sequence[str] | None = None
+) -> list[str]:
+    """Sample a word sequence for one utterance."""
+    pool = list(vocabulary) if vocabulary is not None else list(synth.vocabulary)
+    low, high = synth.words_per_utterance
+    count = int(rng.integers(low, high + 1))
+    return [str(pool[int(rng.integers(0, len(pool)))]) for _ in range(count)]

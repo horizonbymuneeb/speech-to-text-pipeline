@@ -154,3 +154,9 @@ def test_frame_energy_profile():
     features[:, :] = np.array([[1.0, 1.0, 1.0], [3.0, 3.0, 3.0], [5.0, 5.0, 5.0], [7.0, 7.0, 7.0]])
     assert np.allclose(frame_energy_profile(features), [1.0, 3.0, 5.0, 7.0])
     assert frame_energy_profile(np.zeros((0, 3))).size == 0
+
+
+def test_with_deltas_shape():
+    features = np.zeros((5, 4))
+    assert with_deltas(features, CONFIG).shape == (5, 12)
+    assert with_deltas(features, replace(CONFIG, use_deltas=False)).shape == (5, 4)
