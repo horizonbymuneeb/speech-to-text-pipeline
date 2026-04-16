@@ -128,3 +128,29 @@ def test_extractor_geometry_and_cache():
     assert extractor.output_dim == 96
     assert extractor.filterbank.shape == (CONFIG.n_mels, CONFIG.n_fft // 2 + 1)
     assert extractor.filterbank is extractor.filterbank
+
+
+def test_stats_report():
+    extractor = FeatureExtractor(CONFIG, SR)
+    stats = extractor.stats(np.zeros(4000, dtype=np.float32))
+    # frame_count(4000, 200, 80) = 1 + ceil((4000 - 200) / 80) = 49
+    assert stats.num_frames == 49
+    assert stats.feature_dim == 96
+    assert stats.duration_s == pytest.approx(0.5)
+    assert stats.frame_rate_hz == pytest.approx(98.0)
+
+
+def test_crop_and_frame_helpers():
+    features = np.arange(20, dtype=np.float32).reshape(10, 2)
+    assert crop_features(features, 3, 2).shape == (2, 2)
+    assert crop_features(features, 9, 100).shape == (1, 2)
+    assert crop_features(features, 50).shape == (0, 2)
+    assert frames_to_samples(0, CONFIG, SR) == 0
+    assert frames_to_samples(2, CONFIG, SR) == 280
+
+
+def test_frame_energy_profile():
+    features = np.zeros((4, 3))
+    features[:, :] = np.array([[1.0, 1.0, 1.0], [3.0, 3.0, 3.0], [5.0, 5.0, 5.0], [7.0, 7.0, 7.0]])
+    assert np.allclose(frame_energy_profile(features), [1.0, 3.0, 5.0, 7.0])
+    assert frame_energy_profile(np.zeros((0, 3))).size == 0

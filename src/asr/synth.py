@@ -256,3 +256,25 @@ def synthesize_word(
             parts.append(synthesize_consonant(syllable.onset, sample_rate, rng))
         parts.append(synthesize_vowel(syllable.vowel, sample_rate, f0_hz, rng=rng))
     return crossfade_concat(parts, sample_rate)
+
+
+def silence(duration_s: float, sample_rate: int) -> np.ndarray:
+    """A zero-valued signal of the requested duration."""
+    return np.zeros(max(0, int(round(duration_s * sample_rate))), dtype=np.float32)
+
+
+def rms(samples: np.ndarray) -> float:
+    """Root-mean-square level of a signal."""
+    if samples.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
+
+
+def normalize_peak(samples: np.ndarray, peak: float = 0.9) -> np.ndarray:
+    """Scale a signal so its loudest sample is ``peak`` (no-op for silence)."""
+    if not 0.0 < peak <= 1.0:
+        raise SynthesisError("peak must be in (0, 1]")
+    current = float(np.max(np.abs(samples))) if samples.size else 0.0
+    if current == 0.0:
+        return samples.astype(np.float32)
+    return (samples.astype(np.float64) * (peak / current)).astype(np.float32)
