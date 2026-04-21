@@ -337,3 +337,30 @@ def sample_words(
     low, high = synth.words_per_utterance
     count = int(rng.integers(low, high + 1))
     return [str(pool[int(rng.integers(0, len(pool)))]) for _ in range(count)]
+
+
+def make_corpus(
+    audio: AudioConfig,
+    synth: SynthConfig,
+    count: int,
+    seed: int | None = None,
+    vocabulary: Sequence[str] | None = None,
+) -> list[Signal]:
+    """Generate ``count`` utterances deterministically from ``seed``."""
+    if count < 1:
+        raise SynthesisError("count must be >= 1")
+    rng = np.random.default_rng(synth.seed if seed is None else seed)
+    return [
+        synthesize_utterance(sample_words(synth, rng, vocabulary), audio, synth, rng)
+        for _ in range(count)
+    ]
+
+
+def corpus_transcripts(signals: Iterable[Signal]) -> list[str]:
+    """Ground-truth transcripts, one string per utterance."""
+    return [signal.transcript() for signal in signals]
+
+
+def corpus_duration_s(signals: Iterable[Signal]) -> float:
+    """Total duration of a corpus in seconds."""
+    return float(sum(signal.duration_s for signal in signals))
