@@ -91,3 +91,60 @@ class TrainingResult:
             "final_loss": self.history[-1] if self.history else None,
             "seconds": round(self.seconds, 3),
         }
+
+
+def signals_to_samples(
+    signals: Sequence[Signal], extractor: FeatureExtractor, vocabulary: Vocabulary
+) -> list[Sample]:
+    """Turn synthetic utterances into feature/target pairs."""
+    samples: list[Sample] = []
+    for signal in signals:
+        features = extractor.transform(signal.samples)
+        samples.append(
+            Sample(
+                features=features,
+                tokens=tuple(signal.tokens(vocabulary)),
+                words=signal.words,
+            )
+        )
+    return samples
+
+
+def make_samples(
+    config: PipelineConfig,
+    extractor: FeatureExtractor,
+    vocabulary: Vocabulary,
+    count: int,
+    seed: int | None = None,
+) -> list[Sample]:
+    """Generate ``count`` utterances and featurise them."""
+    signals = make_corpus(config.audio, config.synth, count, seed=seed)
+    return signals_to_samples(signals, extractor, vocabulary)
+
+
+def collate(samples: Sequence[Sample]) -> Batch:
+    """Pad a list of samples into one batch (features with zeros, targets with blank)."""
+    if not samples:
+        raise TrainingError("cannot collate an empty batch")
+    max_frames = max(sample.features.shape[0] for sample in samples)
+    max_targets = max(len(sample.tokens) for sample in samples)
+    dim = samples[0].features.shape[1]
+    features = torch.zeros((len(samples), max_frames, dim), dtype=torch.float32)
+    feature_lengths = torch.zeros(len(samples), dtype=torch.long)
+    targets = torch.zeros((len(samples), max_targets), dtype=torch.long)
+    target_lengths = torch.zeros(len(samples), dtype=torch.long)
+    for index, sample in enumerate(samples):
+        frames = sample.features.shape[0]
+        if sample.features.shape[1] != dim:
+            raise TrainingError("samples in a batch must share the feature dimension")
+        features[index, :frames] = torch.from_numpy(sample.features)
+        feature_lengths[index] = frames
+        targets[index, : len(sample.tokens)] = torch.tensor(sample.tokens, dtype=torch.long)
+        target_lengths[index] = len(sample.tokens)
+    return Batch(
+        features=features,
+        feature_lengths=feature_lengths,
+        targets=targets,
+        target_lengths=target_lengths,
+        words=tuple(sample.words for sample in samples),
+    )
