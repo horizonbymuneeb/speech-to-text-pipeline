@@ -77,3 +77,26 @@ def test_hand_computed_distance_matrix():
     assert edit_distance([], ["a", "b"]) == 2
     assert edit_distance(["a", "b"], []) == 2
     assert edit_distance([], []) == 0
+
+
+def test_alignment_preserves_edit_distance():
+    cases = [
+        (["a", "b", "c"], ["a", "b", "c"]),
+        (["a", "b", "c"], ["c", "b", "a"]),
+        (["kasa", "timo"], ["timo"]),
+        (["x"], ["x", "x", "x"]),
+    ]
+    for reference, hypothesis in cases:
+        assert align(reference, hypothesis).distance == edit_distance(reference, hypothesis)
+
+
+def test_transposition_costs_two_edits():
+    alignment = align(["a", "b"], ["b", "a"])
+    assert alignment.distance == 2
+    assert alignment.op_string() in {"S S", "D I", "I D"}
+
+
+def test_empty_reference_conventions():
+    assert word_error_rate([], []) == 0.0
+    assert word_error_rate([], ["a"]) == math.inf
+    assert word_error_rate(["a"], []) == pytest.approx(1.0)

@@ -148,3 +148,62 @@ def collate(samples: Sequence[Sample]) -> Batch:
         target_lengths=target_lengths,
         words=tuple(sample.words for sample in samples),
     )
+
+
+def iterate_batches(
+    samples: Sequence[Sample], batch_size: int, rng: np.random.Generator, *, shuffle: bool = True
+) -> list[Batch]:
+    """Split samples into batches, optionally shuffled with a seeded generator."""
+    if batch_size < 1:
+        raise TrainingError("batch_size must be >= 1")
+    order = rng.permutation(len(samples)) if shuffle else np.arange(len(samples))
+    batches: list[Batch] = []
+    for start in range(0, len(order), batch_size):
+        chunk = [samples[int(index)] for index in order[start : start + batch_size]]
+        batches.append(collate(chunk))
+    return batches
+
+
+def batch_loss(model: TinyCtcModel, batch: Batch, blank: int = 0) -> torch.Tensor:
+    """CTC loss for one batch."""
+    log_probs, out_lengths, _ = model.forward(batch.features, batch.feature_lengths)
+    return ctc_loss(
+        log_probs,
+        batch.targets,
+        out_lengths,
+        batch.target_lengths,
+        blank=blank,
+        reduction="mean",
+    )
+
+
+def train_epoch(
+    model: TinyCtcModel, batches: Sequence[Batch], optimizer: torch.optim.Optimizer, blank: int = 0
+) -> dict[str, float]:
+    """One pass over ``batches``; returns the mean loss and batch count."""
+    if not batches:
+        raise TrainingError("no batches to train on")
+    model.train()
+    total = 0.0
+    for batch in batches:
+        optimizer.zero_grad(set_to_none=True)
+        loss = batch_loss(model, batch, blank)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+        optimizer.step()
+        total += float(loss.detach())
+    return {"loss": total / len(batches), "batches": float(len(batches))}
+
+
+def evaluate_loss(
+    model: TinyCtcModel, batches: Sequence[Batch], blank: int = 0
+) -> dict[str, float]:
+    """Mean CTC loss over ``batches`` without touching gradients."""
+    if not batches:
+        raise TrainingError("no batches to evaluate on")
+    model.eval()
+    total = 0.0
+    with torch.no_grad():
+        for batch in batches:
+            total += float(batch_loss(model, batch, blank))
+    return {"loss": total / len(batches), "batches": float(len(batches))}
