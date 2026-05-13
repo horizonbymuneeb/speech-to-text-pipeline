@@ -100,3 +100,25 @@ def test_empty_reference_conventions():
     assert word_error_rate([], []) == 0.0
     assert word_error_rate([], ["a"]) == math.inf
     assert word_error_rate(["a"], []) == pytest.approx(1.0)
+
+
+def test_character_error_rate():
+    assert char_error_rate("abc", "abc") == 0.0
+    assert char_error_rate("abc", "axc") == pytest.approx(1 / 3)
+    assert char_error_rate("abc", "ab") == pytest.approx(1 / 3)
+    # one insertion over a two-character reference: denominator is the reference
+    assert char_error_rate("ab", "abc") == pytest.approx(0.5)
+    with pytest.raises(MetricError):
+        char_error_rate(["a"], "b")
+
+
+def test_cer_alignment_matches_rate():
+    rate, alignment = cer_with_alignment("hello", "hallo")
+    assert rate == pytest.approx(0.2)
+    assert alignment.substitutions == 1
+
+
+def test_wer_alignment_pair():
+    rate, alignment = wer_with_alignment(["a", "b"], ["a"])
+    assert rate == pytest.approx(0.5)
+    assert alignment.deletions == 1

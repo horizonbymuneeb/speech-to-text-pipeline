@@ -207,3 +207,102 @@ def evaluate_loss(
         for batch in batches:
             total += float(batch_loss(model, batch, blank))
     return {"loss": total / len(batches), "batches": float(len(batches))}
+
+
+def train_model(
+    config: PipelineConfig,
+    *,
+    model: TinyCtcModel | None = None,
+    vocabulary: Vocabulary | None = None,
+    train_samples: Sequence[Sample] | None = None,
+    eval_samples: Sequence[Sample] | None = None,
+    verbose: bool = False,
+) -> TrainingResult:
+    """Train (or continue training) a model on the synthetic corpus."""
+    started = time.perf_counter()
+    torch.manual_seed(config.train.seed)
+    vocabulary = vocabulary or Vocabulary.from_words(config.synth.vocabulary)
+    plain_extractor = FeatureExtractor(config.features, config.sample_rate)
+    if train_samples is None:
+        train_signals = make_corpus(
+            config.audio, config.synth, config.train.train_utterances, seed=config.train.seed
+        )
+        cmvn = plain_extractor.corpus_stats([signal.samples for signal in train_signals])
+        extractor = FeatureExtractor(config.features, config.sample_rate, stats=cmvn)
+        train_samples = signals_to_samples(train_signals, extractor, vocabulary)
+    else:
+        cmvn = None
+        extractor = plain_extractor
+    if eval_samples is None:
+        eval_samples = make_samples(
+            config,
+            extractor,
+            vocabulary,
+            config.train.eval_utterances,
+            seed=config.train.seed + 1000,
+        )
+    if model is None:
+        model = build_model(config.model, config.features.output_dim, vocabulary.size)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.train.learning_rate)
+    rng = np.random.default_rng(config.train.seed)
+    history: list[float] = []
+    for epoch in range(config.train.epochs):
+        batches = iterate_batches(train_samples, config.train.batch_size, rng, shuffle=True)
+        stats = train_epoch(model, batches, optimizer)
+        history.append(stats["loss"])
+        if verbose:
+            print(f"epoch {epoch + 1:3d}/{config.train.epochs}  loss {stats['loss']:.4f}")
+    eval_batches = iterate_batches(eval_samples, config.train.batch_size, rng, shuffle=False)
+    evaluate_loss(model, eval_batches)
+    return TrainingResult(
+        model=model,
+        vocabulary=vocabulary,
+        history=tuple(history),
+        train_samples=len(train_samples),
+        eval_samples=len(eval_samples),
+        parameters=count_parameters(model),
+        seconds=time.perf_counter() - started,
+        cmvn=cmvn,
+    )
+
+
+def save_training_result(result: TrainingResult, config: PipelineConfig) -> Path:
+    """Persist the model plus the vocabulary it was trained with."""
+    metadata = {
+        "vocabulary": result.vocabulary.to_dict(),
+        "history": list(result.history),
+        "parameters": result.parameters,
+        "sample_rate": config.sample_rate,
+        "feature_dim": config.features.output_dim,
+        "chunk_ms": config.decode.chunk_ms,
+        "overlap_ms": config.decode.overlap_ms,
+        "cmvn": result.cmvn_metadata(),
+        "train_samples": result.train_samples,
+        "eval_samples": result.eval_samples,
+        "seconds": round(result.seconds, 3),
+    }
+    return result.model.save(config.checkpoint_path(), metadata)
+
+
+def load_training_result(config: PipelineConfig) -> TrainingResult:
+    """Load a checkpoint back into a :class:`TrainingResult`."""
+    model, metadata = TinyCtcModel.load(config.checkpoint_path())
+    vocabulary = Vocabulary.from_dict(metadata.get("vocabulary", {}))
+    history = tuple(float(value) for value in metadata.get("history", []))
+    cmvn_payload = metadata.get("cmvn")
+    cmvn = None
+    if isinstance(cmvn_payload, dict):
+        cmvn = (
+            np.asarray(cmvn_payload["mean"], dtype=np.float64),
+            np.asarray(cmvn_payload["std"], dtype=np.float64),
+        )
+    return TrainingResult(
+        model=model,
+        vocabulary=vocabulary,
+        history=history,
+        train_samples=int(metadata.get("train_samples", 0)),
+        eval_samples=int(metadata.get("eval_samples", 0)),
+        parameters=int(metadata.get("parameters", model.num_parameters())),
+        seconds=float(metadata.get("seconds", 0.0)),
+        cmvn=cmvn,
+    )
