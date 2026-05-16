@@ -122,3 +122,25 @@ def test_wer_alignment_pair():
     rate, alignment = wer_with_alignment(["a", "b"], ["a"])
     assert rate == pytest.approx(0.5)
     assert alignment.deletions == 1
+
+
+def test_corpus_wer_pools_counts_not_rates():
+    # utterance 1: 1 error / 4 words; utterance 2: 1 error / 1 word
+    pairs = [
+        (["a", "b", "c", "d"], ["a", "b", "c", "x"]),
+        (["a"], ["b"]),
+    ]
+    assert corpus_wer(pairs) == pytest.approx(2 / 5)
+    # averaging the two rates would give (0.25 + 1.0) / 2 = 0.625
+    assert corpus_wer(pairs) != pytest.approx(0.625)
+
+
+def test_corpus_cer_pools_characters():
+    pairs = [("abcd", "abcx"), ("a", "b")]
+    assert corpus_cer(pairs) == pytest.approx(2 / 5)
+
+
+def test_corpus_empty_conventions():
+    assert corpus_wer([]) == 0.0
+    assert corpus_wer([([], [])]) == 0.0
+    assert corpus_wer([([], ["a"])]) == math.inf

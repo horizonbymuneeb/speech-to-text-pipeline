@@ -306,3 +306,8 @@ def load_training_result(config: PipelineConfig) -> TrainingResult:
         seconds=float(metadata.get("seconds", 0.0)),
         cmvn=cmvn,
     )
+
+
+def describe_model(model: TinyCtcModel) -> dict[str, Any]:
+    """Thin wrapper so callers do not import :mod:`asr.model` just for a summary."""
+    return model_summary(model)
