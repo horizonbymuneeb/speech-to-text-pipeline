@@ -24,3 +24,30 @@ import numpy as np
 
 from asr.config import VadConfig
 from asr.dsp import frame_count, frame_signal
+
+EPSILON = 1e-12
+
+
+class VadError(ValueError):
+    """Raised for invalid detector input."""
+
+
+@dataclass(frozen=True)
+class FrameStats:
+    """Per-frame measurements used by the detector (and by the tests)."""
+
+    energy_db: np.ndarray
+    zcr: np.ndarray
+    frame_length: int
+    hop_length: int
+    num_samples: int
+
+    def __post_init__(self) -> None:
+        if self.energy_db.shape != self.zcr.shape:
+            raise VadError("energy_db and zcr must have the same shape")
+        if self.energy_db.ndim != 1:
+            raise VadError("frame statistics must be one-dimensional")
+
+    @property
+    def num_frames(self) -> int:
+        return int(self.energy_db.shape[0])

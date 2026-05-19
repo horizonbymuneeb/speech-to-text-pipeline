@@ -144,3 +144,24 @@ def test_corpus_empty_conventions():
     assert corpus_wer([]) == 0.0
     assert corpus_wer([([], [])]) == 0.0
     assert corpus_wer([([], ["a"])]) == math.inf
+
+
+def test_alignment_is_deterministic():
+    first = align(["a", "b", "c"], ["c", "b", "a"]).op_string()
+    second = align(["a", "b", "c"], ["c", "b", "a"]).op_string()
+    assert first == second
+
+
+def test_error_counts_helper():
+    counts = error_counts(align(["a", "b", "c"], ["a", "x"]))
+    assert counts["substitutions"] == 1
+    assert counts["deletions"] == 1
+    assert counts["total"] == 2
+
+
+def test_format_alignment_renders_three_lines():
+    text = format_alignment(["a", "b"], ["a", "x"])
+    lines = text.splitlines()
+    assert lines[0].startswith("WER")
+    assert len(lines) == 4
+    assert "S" in lines[2]
