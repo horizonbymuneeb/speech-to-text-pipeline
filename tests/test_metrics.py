@@ -165,3 +165,31 @@ def test_format_alignment_renders_three_lines():
     assert lines[0].startswith("WER")
     assert len(lines) == 4
     assert "S" in lines[2]
+
+
+def test_edit_op_validation():
+    with pytest.raises(MetricError, match="unknown op"):
+        EditOp("move", 0, 0, "a", "a")
+    with pytest.raises(MetricError, match="deletion"):
+        EditOp(OP_DEL, 0, None, None, None)
+    with pytest.raises(MetricError, match="insertion"):
+        EditOp(OP_INS, None, 0, None, None)
+    assert EditOp(OP_EQUAL, 0, 0, "a", "a").symbol() == "="
+
+
+def test_alignment_dataclass_properties():
+    alignment = Alignment(ops=(EditOp(OP_SUB, 0, 0, "a", "b"),), distance=1, ref_length=1, hyp_length=1)
+    assert alignment.errors == 1
+    assert alignment.correct == 0
+    assert alignment.to_dict()["distance"] == 1
+
+
+def test_summarize_aggregates():
+    pairs = [(["a", "b"], ["a", "b"]), (["c"], ["d"])]
+    summary = summarize(pairs)
+    assert summary["utterances"] == 2.0
+    assert summary["wer"] == pytest.approx(1 / 3)
+    assert summary["errors"] == 1.0
+    assert summary["ref_words"] == 3.0
+    with pytest.raises(MetricError, match="empty"):
+        summarize([])
