@@ -95,3 +95,28 @@ def frame_energy(frames: np.ndarray) -> np.ndarray:
 def to_db(power: np.ndarray) -> np.ndarray:
     """Convert power to dB, flooring at ``-120 dB`` instead of ``-inf``."""
     return np.maximum(10.0 * np.log10(np.maximum(power, EPSILON)), -120.0)
+
+
+def energy_db(frames: np.ndarray) -> np.ndarray:
+    """Frame energy in dB."""
+    return to_db(frame_energy(frames))
+
+
+def zero_crossing_rate(frames: np.ndarray) -> np.ndarray:
+    """Fraction of adjacent sample pairs that change sign in each frame."""
+    if frames.ndim != 2:
+        raise VadError("frames must be 2-D")
+    if frames.shape[1] < 2:
+        return np.zeros(frames.shape[0], dtype=np.float64)
+    signs = np.signbit(frames)
+    crossings = np.not_equal(signs[:, 1:], signs[:, :-1])
+    return np.mean(crossings, axis=1)
+
+
+def noise_floor_db(energies_db: np.ndarray, percentile: float = 15.0) -> float:
+    """Noise floor estimate: a low percentile of the frame energies."""
+    if energies_db.size == 0:
+        raise VadError("cannot estimate a noise floor from zero frames")
+    if not 0.0 <= percentile <= 100.0:
+        raise VadError("percentile must be in [0, 100]")
+    return float(np.percentile(energies_db, percentile))

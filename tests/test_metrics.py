@@ -193,3 +193,8 @@ def test_summarize_aggregates():
     assert summary["ref_words"] == 3.0
     with pytest.raises(MetricError, match="empty"):
         summarize([])
+
+
+def test_string_input_is_rejected():
+    with pytest.raises(MetricError, match="bare string"):
+        edit_distance("abc", "abd")
