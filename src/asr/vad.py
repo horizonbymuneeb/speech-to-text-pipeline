@@ -226,3 +226,56 @@ def trim_to_speech(samples: np.ndarray, segments: Sequence[SpeechSegment]) -> np
         return np.zeros(0, dtype=np.float32)
     signal = np.asarray(samples)
     return np.concatenate([signal[segment.start_sample : segment.end_sample] for segment in segments])
+
+
+class VoiceActivityDetector:
+    """Frame-based detector configured by :class:`asr.config.VadConfig`."""
+
+    def __init__(self, config: VadConfig, sample_rate: int) -> None:
+        if sample_rate <= 0:
+            raise VadError("sample_rate must be positive")
+        self.config = config
+        self.sample_rate = sample_rate
+        self.frame_length = config.frame_length(sample_rate)
+        self.hop_length = config.hop_length(sample_rate)
+
+    def analyze(self, samples: np.ndarray) -> FrameStats:
+        """Compute per-frame energy and ZCR."""
+        frames = frame_signal(samples, self.frame_length, self.hop_length)
+        return FrameStats(
+            energy_db=energy_db(frames),
+            zcr=zero_crossing_rate(frames),
+            frame_length=self.frame_length,
+            hop_length=self.hop_length,
+            num_samples=int(np.asarray(samples).size),
+        )
+
+    def decisions(self, stats: FrameStats) -> np.ndarray:
+        """Frame decisions with hangover applied."""
+        raw = frame_decisions(stats.energy_db, stats.zcr, self.config)
+        return apply_hangover(raw, self.config.hangover_frames(self.sample_rate))
+
+    def detect(self, samples: np.ndarray) -> list[SpeechSegment]:
+        """Detect speech segments in a waveform."""
+        signal = np.asarray(samples)
+        if signal.ndim != 1:
+            raise VadError("samples must be mono")
+        if signal.size == 0:
+            return []
+        stats = self.analyze(signal)
+        if stats.num_frames == 0:
+            return []
+        decided = self.decisions(stats)
+        return frames_to_segments(
+            decided,
+            hop_length=self.hop_length,
+            frame_length=self.frame_length,
+            num_samples=signal.size,
+            min_speech_frames=self.config.min_speech_frames(self.sample_rate),
+            pre_roll_frames=self.config.pre_roll_frames(self.sample_rate),
+        )
+
+    def speech_ratio(self, samples: np.ndarray) -> float:
+        """Fraction of ``samples`` that the detector considers speech."""
+        segments = self.detect(samples)
+        return speech_ratio(segments, int(np.asarray(samples).size))

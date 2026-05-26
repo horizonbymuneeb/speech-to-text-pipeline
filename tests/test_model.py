@@ -21,3 +21,4 @@ from asr.model import (
 )
 
 INPUT_DIM = 12
+VOCAB_SIZE = 5
