@@ -120,3 +120,73 @@ def noise_floor_db(energies_db: np.ndarray, percentile: float = 15.0) -> float:
     if not 0.0 <= percentile <= 100.0:
         raise VadError("percentile must be in [0, 100]")
     return float(np.percentile(energies_db, percentile))
+
+
+def frame_decisions(
+    energies_db: np.ndarray, zcr: np.ndarray, config: VadConfig, floor_db: float | None = None
+) -> np.ndarray:
+    """Per-frame speech decisions (see the module docstring for the rule)."""
+    if energies_db.shape != zcr.shape:
+        raise VadError("energies_db and zcr must have the same shape")
+    if energies_db.size == 0:
+        return np.zeros(0, dtype=bool)
+    floor = noise_floor_db(energies_db) if floor_db is None else float(floor_db)
+    loud = energies_db >= floor + config.energy_threshold_db
+    voiced = zcr <= config.max_zcr
+    clearly_loud = energies_db >= floor + 2.0 * config.energy_threshold_db
+    return np.asarray(loud & (voiced | clearly_loud), dtype=bool)
+
+
+def apply_hangover(decisions: np.ndarray, hangover_frames: int) -> np.ndarray:
+    """Extend every speech run by ``hangover_frames`` frames."""
+    if hangover_frames < 0:
+        raise VadError("hangover_frames must be non-negative")
+    if decisions.size == 0 or hangover_frames == 0:
+        return decisions.astype(bool).copy()
+    result = decisions.astype(bool).copy()
+    indices = np.flatnonzero(decisions)
+    for index in indices:
+        end = min(result.size, index + hangover_frames + 1)
+        result[index:end] = True
+    return result
+
+
+def frames_to_segments(
+    decisions: np.ndarray,
+    *,
+    hop_length: int,
+    frame_length: int,
+    num_samples: int,
+    min_speech_frames: int = 1,
+    pre_roll_frames: int = 0,
+) -> list[SpeechSegment]:
+    """Convert frame decisions into sample-accurate speech segments."""
+    if decisions.size == 0:
+        return []
+    segments: list[SpeechSegment] = []
+    index = 0
+    while index < decisions.size:
+        if not decisions[index]:
+            index += 1
+            continue
+        start = index
+        while index + 1 < decisions.size and decisions[index + 1]:
+            index += 1
+        end = index
+        index += 1
+        if end - start + 1 < min_speech_frames:
+            continue
+        start_frame = max(0, start - pre_roll_frames)
+        start_sample = start_frame * hop_length
+        end_sample = min(num_samples, end * hop_length + frame_length)
+        if end_sample <= start_sample:
+            continue
+        segments.append(
+            SpeechSegment(
+                start_sample=start_sample,
+                end_sample=end_sample,
+                start_frame=start_frame,
+                end_frame=end,
+            )
+        )
+    return merge_segments(segments)
