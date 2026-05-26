@@ -190,3 +190,39 @@ def frames_to_segments(
             )
         )
     return merge_segments(segments)
+
+
+def merge_segments(segments: Sequence[SpeechSegment]) -> list[SpeechSegment]:
+    """Merge segments that overlap or touch after pre-roll extension."""
+    if not segments:
+        return []
+    ordered = sorted(segments, key=lambda segment: segment.start_sample)
+    merged = [ordered[0]]
+    for segment in ordered[1:]:
+        last = merged[-1]
+        if segment.start_sample <= last.end_sample:
+            merged[-1] = SpeechSegment(
+                start_sample=last.start_sample,
+                end_sample=max(last.end_sample, segment.end_sample),
+                start_frame=last.start_frame,
+                end_frame=max(last.end_frame, segment.end_frame),
+            )
+        else:
+            merged.append(segment)
+    return merged
+
+
+def speech_ratio(segments: Sequence[SpeechSegment], num_samples: int) -> float:
+    """Fraction of the signal covered by speech segments."""
+    if num_samples <= 0:
+        raise VadError("num_samples must be positive")
+    covered = sum(segment.num_samples for segment in segments)
+    return min(1.0, covered / float(num_samples))
+
+
+def trim_to_speech(samples: np.ndarray, segments: Sequence[SpeechSegment]) -> np.ndarray:
+    """Concatenate the speech segments of a signal (gaps removed)."""
+    if not segments:
+        return np.zeros(0, dtype=np.float32)
+    signal = np.asarray(samples)
+    return np.concatenate([signal[segment.start_sample : segment.end_sample] for segment in segments])

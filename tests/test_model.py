@@ -19,3 +19,5 @@ from asr.model import (
     model_summary,
     validate_batch,
 )
+
+INPUT_DIM = 12
