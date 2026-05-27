@@ -10,3 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
+
+BLANK_TOKEN = "<blank>"
+UNKNOWN_TOKEN = "<unk>"
+
+
+class VocabularyError(ValueError):
+    """Raised when a word is not in the vocabulary or an index is out of range."""
