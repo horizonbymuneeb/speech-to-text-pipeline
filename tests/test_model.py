@@ -141,3 +141,28 @@ def test_predict_tokens_returns_collapsed_tokens(model):
     assert all(isinstance(token, int) and 0 <= token < VOCAB_SIZE for token in tokens)
     with pytest.raises(ModelError, match="time, input_dim"):
         model.predict_tokens(torch.randn(1, 30, INPUT_DIM))
+
+
+def test_downsample_lengths():
+    assert downsample_lengths(torch.tensor([10, 11, 1])).tolist() == [5, 6, 1]
+
+
+def test_validate_batch():
+    validate_batch(torch.zeros(2, 5, 3), torch.zeros(2, 2, dtype=torch.long))
+    with pytest.raises(Exception):
+        validate_batch(torch.zeros(2, 5), torch.zeros(2, 2, dtype=torch.long))
+    with pytest.raises(Exception):
+        validate_batch(torch.zeros(2, 5, 3), torch.zeros(3, 2, dtype=torch.long))
+
+
+def test_freeze_disables_gradients(model):
+    model.freeze()
+    assert all(not parameter.requires_grad for parameter in model.parameters())
+    assert model.training is False
+
+
+def test_model_config_validation():
+    with pytest.raises(Exception):
+        TinyCtcModel(input_dim=0, vocab_size=VOCAB_SIZE)
+    with pytest.raises(Exception):
+        TinyCtcModel(input_dim=INPUT_DIM, vocab_size=1)
