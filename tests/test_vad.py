@@ -92,3 +92,91 @@ def test_zero_crossing_rate():
     constant = np.array([[1.0, 1.0, 1.0, 1.0]])
     assert zero_crossing_rate(alternating)[0] == pytest.approx(1.0)
     assert zero_crossing_rate(constant)[0] == pytest.approx(0.0)
+
+
+def test_noise_floor_is_a_low_percentile():
+    energies = np.array([-80.0, -78.0, -10.0, -5.0])
+    assert noise_floor_db(energies, 25.0) == pytest.approx(np.percentile(energies, 25.0))
+    with pytest.raises(VadError):
+        noise_floor_db(np.array([]))
+    with pytest.raises(VadError, match="percentile"):
+        noise_floor_db(energies, 150.0)
+
+
+def test_energy_decision_accepts_loud_frames():
+    energies = np.array([-70.0, -70.0, -20.0])
+    zcr = np.array([0.5, 0.5, 0.1])
+    decisions = frame_decisions(energies, zcr, CONFIG, floor_db=-70.0)
+    assert decisions.tolist() == [False, False, True]
+
+
+def test_zcr_vetoes_marginal_frames_but_not_loud_ones():
+    marginal = np.array([-60.0, -45.0])
+    zcr = np.array([0.9, 0.9])
+    # threshold is 8 dB, so -60 is 10 dB over the floor (marginal), -45 is 25 dB (clearly loud)
+    decisions = frame_decisions(marginal, zcr, CONFIG, floor_db=-70.0)
+    assert decisions.tolist() == [False, True]
+
+
+def test_hangover_extends_runs():
+    decisions = np.array([False, True, False, False, False])
+    extended = apply_hangover(decisions, 2)
+    assert extended.tolist() == [False, True, True, True, False]
+    assert apply_hangover(decisions, 0).tolist() == decisions.tolist()
+    with pytest.raises(VadError, match="non-negative"):
+        apply_hangover(decisions, -1)
+
+
+def test_frames_to_segments_filters_short_runs():
+    decisions = np.array([True, True, False, True, False])
+    segments = frames_to_segments(
+        decisions, hop_length=80, frame_length=200, num_samples=800, min_speech_frames=2
+    )
+    assert len(segments) == 1
+    assert segments[0].start_sample == 0
+
+
+def test_segments_are_ordered_and_merged():
+    a = SpeechSegment(0, 100, 0, 1)
+    b = SpeechSegment(90, 200, 1, 2)
+    merged = merge_segments([b, a])
+    assert len(merged) == 1
+    assert (merged[0].start_sample, merged[0].end_sample) == (0, 200)
+
+
+def test_segment_validation_and_dict():
+    with pytest.raises(VadError, match="invalid segment"):
+        SpeechSegment(10, 10, 0, 1)
+    segment = SpeechSegment(0, 800, 0, 5)
+    assert segment.duration_s(SR) == pytest.approx(0.1)
+    assert segment.to_dict(SR)["duration_s"] == pytest.approx(0.1)
+
+
+def test_speech_ratio_and_trim():
+    signal, _, _ = make_gapped_signal()
+    detector = VoiceActivityDetector(CONFIG, SR)
+    segments = detector.detect(signal)
+    ratio = speech_ratio(segments, signal.size)
+    assert 0.2 < ratio < 1.0
+    trimmed = trim_to_speech(signal, segments)
+    assert 0 < trimmed.size < signal.size
+    assert trim_to_speech(signal, []).size == 0
+    with pytest.raises(VadError, match="num_samples"):
+        speech_ratio(segments, 0)
+
+
+def test_detector_frame_geometry():
+    detector = VoiceActivityDetector(CONFIG, SR)
+    assert detector.frame_length == 200
+    assert detector.hop_length == 80
+    stats = detector.analyze(np.zeros(1600, dtype=np.float32))
+    assert stats.num_frames == 19
+    assert stats.frame_length == 200
+
+
+def test_detector_rejects_bad_rate_and_shape():
+    with pytest.raises(VadError, match="sample_rate"):
+        VoiceActivityDetector(CONFIG, 0)
+    detector = VoiceActivityDetector(CONFIG, SR)
+    with pytest.raises(VadError, match="mono"):
+        detector.detect(np.zeros((2, 100), dtype=np.float32))
